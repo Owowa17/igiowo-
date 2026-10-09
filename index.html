@@ -10,6 +10,9 @@
   .header { background: #D4AF37; padding: 20px; border-radius: 12px; text-align: center; margin-bottom: 16px; }
   .header h1 { color: #1B1B1B; font-size: 24px; }
   .header p { color: #1B1B1B; font-size: 12px; margin-top: 6px; opacity: 0.7; }
+  .tabs { display: flex; gap: 8px; margin-bottom: 16px; }
+  .tab { flex: 1; padding: 12px; border-radius: 10px; background: rgba(251, 248, 239, 0.15); color: #FBF8EF; font-weight: 600; font-size: 14px; text-align: center; cursor: pointer; border: none; }
+  .tab.active { background: #FBF8EF; color: #0B3D2E; }
   .summary-bar { background: #FBF8EF; padding: 12px 16px; border-radius: 10px; margin-bottom: 16px; display: flex; justify-content: space-around; }
   .summary-item { text-align: center; }
   .summary-num { font-size: 22px; font-weight: 700; color: #0B3D2E; }
@@ -20,19 +23,34 @@
   .today-badge { background: #FF3B30; color: #FFFFFF; padding: 2px 8px; border-radius: 10px; font-size: 10px; font-weight: 700; margin-left: 8px; }
   .card { background: #FBF8EF; padding: 14px; border-radius: 10px; margin-bottom: 10px; border-left: 4px solid #D4AF37; }
   .card.today { border-left-color: #FF3B30; box-shadow: 0 0 0 2px rgba(255, 59, 48, 0.2); }
+  .card.win { border-left-color: #1B5E20; }
+  .card.loss { border-left-color: #B71C1C; }
+  .card.void { border-left-color: #999; opacity: 0.7; }
   .match { font-weight: 600; font-size: 15px; margin-bottom: 4px; }
   .league { font-size: 12px; color: #666; margin-bottom: 8px; }
   .prob-bar { background: #E5E5E5; border-radius: 20px; height: 8px; overflow: hidden; margin-bottom: 6px; }
   .prob-fill { background: linear-gradient(90deg, #0B3D2E, #D4AF37); height: 100%; border-radius: 20px; }
   .prob-text { font-size: 13px; font-weight: 600; color: #0B3D2E; display: flex; justify-content: space-between; }
+  .result-row { display: flex; justify-content: space-between; align-items: center; font-size: 13px; font-weight: 600; margin-top: 4px; }
+  .result-win { color: #1B5E20; }
+  .result-loss { color: #B71C1C; }
+  .result-void { color: #666; }
+  .hit-note { font-size: 11px; color: #666; font-weight: 400; }
   .stats { background: #F1F7F3; padding: 16px; border-radius: 10px; margin-top: 20px; }
   .stats h2 { color: #0B3D2E; font-size: 16px; margin-bottom: 12px; }
   .stat-row { display: flex; justify-content: space-between; padding: 8px 0; border-bottom: 1px solid #ddd; }
   .stat-row:last-child { border-bottom: none; }
   .stat-label { color: #666; font-size: 13px; }
   .stat-value { font-weight: 700; color: #0B3D2E; font-size: 15px; }
+  .hit-bar { background: #E5E5E5; border-radius: 20px; height: 14px; overflow: hidden; margin: 10px 0; }
+  .hit-fill { background: linear-gradient(90deg, #1B5E20, #D4AF37); height: 100%; border-radius: 20px; transition: width 0.5s ease; }
+  .filter-row { display: flex; gap: 6px; margin-bottom: 14px; }
+  .filter-btn { flex: 1; padding: 10px 6px; border-radius: 8px; background: rgba(251, 248, 239, 0.15); color: #FBF8EF; font-weight: 600; font-size: 12px; text-align: center; cursor: pointer; border: none; }
+  .filter-btn.active { background: #D4AF37; color: #1B1B1B; }
   .loading { text-align: center; color: #FBF8EF; padding: 40px; font-size: 16px; }
   .error { background: #FDE2E2; color: #B71C1C; padding: 20px; border-radius: 10px; text-align: center; }
+  .empty { text-align: center; color: #FBF8EF; padding: 30px; font-size: 14px; opacity: 0.8; }
+  .hidden { display: none; }
 </style>
 </head>
 <body>
@@ -40,10 +58,46 @@
     <h1>⚽ Igiowo</h1>
     <p>Daily HT Under 1.5 Predictions</p>
   </div>
-  <div id="content" class="loading">Loading predictions...</div>
+
+  <div class="tabs">
+    <button class="tab active" id="tabToday" onclick="switchTab('today')">Today</button>
+    <button class="tab" id="tabHistory" onclick="switchTab('history')">History</button>
+  </div>
+
+  <div id="todayView">
+    <div id="todayContent" class="loading">Loading predictions...</div>
+  </div>
+
+  <div id="historyView" class="hidden">
+    <div class="filter-row">
+      <button class="filter-btn active" id="filterAll" onclick="setFilter('all')">All Time</button>
+      <button class="filter-btn" id="filter7" onclick="setFilter('7')">Last 7 Days</button>
+      <button class="filter-btn" id="filter30" onclick="setFilter('30')">Last 30 Days</button>
+    </div>
+    <div id="historyContent" class="loading">Loading history...</div>
+  </div>
+
   <script>
     const SHEET_ID = "1Vx5V6paYAMivmjDu4tbt3u0x-W7z37W8R1ZqswNulys";
     const SHEET_NAME = "Daily prediction";
+    let allData = [];
+    let currentFilter = "all";
+
+    function switchTab(tab) {
+      document.getElementById('tabToday').classList.toggle('active', tab === 'today');
+      document.getElementById('tabHistory').classList.toggle('active', tab === 'history');
+      document.getElementById('todayView').classList.toggle('hidden', tab !== 'today');
+      document.getElementById('historyView').classList.toggle('hidden', tab !== 'history');
+      if (tab === 'history') renderHistory();
+    }
+
+    function setFilter(f) {
+      currentFilter = f;
+      document.getElementById('filterAll').classList.toggle('active', f === 'all');
+      document.getElementById('filter7').classList.toggle('active', f === '7');
+      document.getElementById('filter30').classList.toggle('active', f === '30');
+      renderHistory();
+    }
 
     async function loadData() {
       try {
@@ -60,106 +114,166 @@
         rows.forEach(r => {
           if (!r.c) return;
           const get = i => r.c[i] ? (r.c[i].v || r.c[i].f || "") : "";
+          const date = get(0);
           const match = get(1);
           const league = get(2);
           const kickoff = get(3);
           const prob = parseFloat(get(4)) || 0;
           const status = get(8);
           const result = get(9);
+          const notes = get(10);
           if (!match || !kickoff) return;
           const dedupKey = match + "|" + kickoff;
           if (status === "Pending" && !seen.has(dedupKey)) {
             seen.add(dedupKey);
-            pending.push({ match, league, kickoff, prob });
+            pending.push({ date, match, league, kickoff, prob });
           }
-          if (status === "Completed") completed.push({ result });
+          if (status === "Completed") completed.push({ date, match, league, kickoff, prob, result, notes });
         });
 
-        pending.sort((a, b) => {
-          const tA = new Date(a.kickoff).getTime();
-          const tB = new Date(b.kickoff).getTime();
-          if (tA !== tB) return tA - tB;
-          return b.prob - a.prob;
-        });
-
-        const now = new Date();
-        const today = new Date(now.getFullYear(), now.getMonth(), now.getDate());
-        const tomorrow = new Date(today.getTime() + 24 * 60 * 60 * 1000);
-
-        const groups = {};
-        pending.forEach(p => {
-          const ko = new Date(p.kickoff);
-          const koDate = new Date(ko.getFullYear(), ko.getMonth(), ko.getDate());
-          const key = koDate.toISOString().split('T')[0];
-          if (!groups[key]) groups[key] = { date: koDate, picks: [] };
-          groups[key].picks.push(p);
-        });
-
-        const wins = completed.filter(r => r.result === "Win").length;
-        const total = completed.length;
-        const hitRate = total > 0 ? (wins / total * 100).toFixed(1) : "—";
-
-        const todayKey = today.toISOString().split('T')[0];
-        const tomorrowKey = tomorrow.toISOString().split('T')[0];
-        const todayCount = groups[todayKey] ? groups[todayKey].picks.length : 0;
-        const tomorrowCount = groups[tomorrowKey] ? groups[tomorrowKey].picks.length : 0;
-
-        let html = "";
-        html += `<div class="summary-bar">
-          <div class="summary-item"><div class="summary-num">${todayCount}</div><div class="summary-label">Today</div></div>
-          <div class="summary-item"><div class="summary-num">${tomorrowCount}</div><div class="summary-label">Tomorrow</div></div>
-          <div class="summary-item"><div class="summary-num">${pending.length}</div><div class="summary-label">Total</div></div>
-        </div>`;
-
-        if (pending.length === 0) {
-          html += '<div class="error">No pending picks found. Run the Colab engine to refresh.</div>';
-        } else {
-          const sortedKeys = Object.keys(groups).sort();
-          sortedKeys.forEach(key => {
-            const grp = groups[key];
-            const isToday = key === todayKey;
-            const isTomorrow = key === tomorrowKey;
-            let dateLabel;
-            if (isToday) dateLabel = "Today";
-            else if (isTomorrow) dateLabel = "Tomorrow";
-            else dateLabel = grp.date.toLocaleDateString('en-US', { weekday: 'short', month: 'short', day: 'numeric' });
-
-            html += `<div class="date-group">
-              <div class="date-header">
-                <span>${dateLabel}${isToday ? '<span class="today-badge">NOW</span>' : ''}</span>
-                <span class="date-count">${grp.picks.length} pick${grp.picks.length !== 1 ? 's' : ''}</span>
-              </div>`;
-
-            grp.picks.forEach(p => {
-              const probPct = (p.prob * 100).toFixed(1);
-              const timeStr = new Date(p.kickoff).toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit', hour12: false });
-              html += `<div class="card${isToday ? ' today' : ''}">
-                <div class="match">${p.match}</div>
-                <div class="league">${p.league} • ${timeStr}</div>
-                <div class="prob-bar"><div class="prob-fill" style="width:${probPct}%"></div></div>
-                <div class="prob-text"><span>HT U1.5</span><span>${probPct}%</span></div>
-              </div>`;
-            });
-
-            html += `</div>`;
-          });
-        }
-
-        html += `<div class="stats">
-          <h2>📊 Track Record</h2>
-          <div class="stat-row"><span class="stat-label">Total Settled</span><span class="stat-value">${total}</span></div>
-          <div class="stat-row"><span class="stat-label">Wins</span><span class="stat-value">${wins}</span></div>
-          <div class="stat-row"><span class="stat-label">Losses</span><span class="stat-value">${total - wins}</span></div>
-          <div class="stat-row"><span class="stat-label">Hit Rate</span><span class="stat-value">${hitRate}%</span></div>
-        </div>`;
-
-        document.getElementById("content").className = "";
-        document.getElementById("content").innerHTML = html;
+        allData = { pending, completed };
+        renderToday();
+        if (document.getElementById('historyView').classList.contains('hidden') === false) renderHistory();
       } catch (e) {
-        document.getElementById("content").innerHTML = '<div class="error">Error loading sheet: ' + e.message + '</div>';
+        document.getElementById('todayContent').innerHTML = '<div class="error">Error loading: ' + e.message + '</div>';
       }
     }
+
+    function renderToday() {
+      const pending = allData.pending.slice();
+      pending.sort((a, b) => {
+        const tA = new Date(a.kickoff).getTime();
+        const tB = new Date(b.kickoff).getTime();
+        if (tA !== tB) return tA - tB;
+        return b.prob - a.prob;
+      });
+
+      const now = new Date();
+      const today = new Date(now.getFullYear(), now.getMonth(), now.getDate());
+      const tomorrow = new Date(today.getTime() + 24 * 60 * 60 * 1000);
+      const todayKey = today.toISOString().split('T')[0];
+      const tomorrowKey = tomorrow.toISOString().split('T')[0];
+
+      const groups = {};
+      pending.forEach(p => {
+        const ko = new Date(p.kickoff);
+        const koDate = new Date(ko.getFullYear(), ko.getMonth(), ko.getDate());
+        const key = koDate.toISOString().split('T')[0];
+        if (!groups[key]) groups[key] = { date: koDate, picks: [] };
+        groups[key].picks.push(p);
+      });
+
+      const todayCount = groups[todayKey] ? groups[todayKey].picks.length : 0;
+      const tomorrowCount = groups[tomorrowKey] ? groups[tomorrowKey].picks.length : 0;
+
+      let html = `<div class="summary-bar">
+        <div class="summary-item"><div class="summary-num">${todayCount}</div><div class="summary-label">Today</div></div>
+        <div class="summary-item"><div class="summary-num">${tomorrowCount}</div><div class="summary-label">Tomorrow</div></div>
+        <div class="summary-item"><div class="summary-num">${pending.length}</div><div class="summary-label">Total</div></div>
+      </div>`;
+
+      if (pending.length === 0) {
+        html += '<div class="error">No pending picks. Run the Colab engine to refresh.</div>';
+      } else {
+        const sortedKeys = Object.keys(groups).sort();
+        sortedKeys.forEach(key => {
+          const grp = groups[key];
+          const isToday = key === todayKey;
+          const isTomorrow = key === tomorrowKey;
+          let dateLabel;
+          if (isToday) dateLabel = "Today";
+          else if (isTomorrow) dateLabel = "Tomorrow";
+          else dateLabel = grp.date.toLocaleDateString('en-US', { weekday: 'short', month: 'short', day: 'numeric' });
+
+          html += `<div class="date-group">
+            <div class="date-header">
+              <span>${dateLabel}${isToday ? '<span class="today-badge">NOW</span>' : ''}</span>
+              <span class="date-count">${grp.picks.length} pick${grp.picks.length !== 1 ? 's' : ''}</span>
+            </div>`;
+
+          grp.picks.forEach(p => {
+            const probPct = (p.prob * 100).toFixed(1);
+            const timeStr = new Date(p.kickoff).toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit', hour12: false });
+            html += `<div class="card${isToday ? ' today' : ''}">
+              <div class="match">${p.match}</div>
+              <div class="league">${p.league} • ${timeStr}</div>
+              <div class="prob-bar"><div class="prob-fill" style="width:${probPct}%"></div></div>
+              <div class="prob-text"><span>HT U1.5</span><span>${probPct}%</span></div>
+            </div>`;
+          });
+
+          html += `</div>`;
+        });
+      }
+
+      document.getElementById('todayContent').className = "";
+      document.getElementById('todayContent').innerHTML = html;
+    }
+
+    function renderHistory() {
+      const completed = allData.completed.slice();
+      let filtered = completed;
+
+      if (currentFilter === "7" || currentFilter === "30") {
+        const days = parseInt(currentFilter);
+        const cutoff = new Date();
+        cutoff.setDate(cutoff.getDate() - days);
+        filtered = completed.filter(c => {
+          const d = new Date(c.date || c.kickoff);
+          return d >= cutoff;
+        });
+      }
+
+      const wins = filtered.filter(r => r.result === "Win").length;
+      const losses = filtered.filter(r => r.result === "Loss").length;
+      const voids = filtered.filter(r => r.result === "Void").length;
+      const totalSettled = wins + losses;
+      const hitRate = totalSettled > 0 ? (wins / totalSettled * 100).toFixed(1) : "—";
+
+      let html = "";
+
+      if (totalSettled === 0) {
+        html += `<div class="empty">No settled picks yet for this period.<br><br>Results will appear here once matches are completed and marked in the Google Sheet.</div>`;
+      } else {
+        html += `<div class="stats">
+          <h2>📊 Track Record</h2>
+          <div class="stat-row"><span class="stat-label">Total Settled</span><span class="stat-value">${totalSettled}</span></div>
+          <div class="stat-row"><span class="stat-label">Wins</span><span class="stat-value" style="color:#1B5E20">${wins}</span></div>
+          <div class="stat-row"><span class="stat-label">Losses</span><span class="stat-value" style="color:#B71C1C">${losses}</span></div>
+          ${voids > 0 ? `<div class="stat-row"><span class="stat-label">Voids</span><span class="stat-value" style="color:#666">${voids}</span></div>` : ''}
+          <div class="stat-row"><span class="stat-label">Hit Rate</span><span class="stat-value">${hitRate}%</span></div>
+          <div class="hit-bar"><div class="hit-fill" style="width:${hitRate}%"></div></div>
+        </div>`;
+
+        const sortedByDate = filtered.slice().sort((a, b) => new Date(b.date || b.kickoff) - new Date(a.date || a.kickoff));
+        html += `<div style="margin-top:20px;"><div class="date-header"><span>Results</span><span class="date-count">${sortedByDate.length} record${sortedByDate.length !== 1 ? 's' : ''}</span></div>`;
+
+        sortedByDate.forEach(c => {
+          const ko = new Date(c.kickoff);
+          const dateStr = ko.toLocaleDateString('en-US', { month: 'short', day: 'numeric' });
+          const probPct = (c.prob * 100).toFixed(1);
+          const resultClass = c.result === "Win" ? "result-win" : c.result === "Loss" ? "result-loss" : "result-void";
+          const cardClass = c.result === "Win" ? "win" : c.result === "Loss" ? "loss" : "void";
+          const icon = c.result === "Win" ? "✅" : c.result === "Loss" ? "❌" : "⏸";
+          html += `<div class="card ${cardClass}">
+            <div class="match">${c.match}</div>
+            <div class="league">${c.league} • ${dateStr}</div>
+            <div class="result-row">
+              <span class="${resultClass}">${icon} ${c.result}</span>
+              <span class="hit-note">${c.notes || 'Predicted: ' + probPct + '%'}</span>
+            </div>
+          </div>`;
+        });
+
+        html += `</div>`;
+      }
+
+      document.getElementById('historyContent').className = "";
+      document.getElementById('historyContent').innerHTML = html;
+    }
+
     loadData();
+    setInterval(loadData, 120000);
   </script>
 </body>
 </html>
