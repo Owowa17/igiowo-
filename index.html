@@ -10,13 +10,21 @@
   .header { background: #D4AF37; padding: 20px; border-radius: 12px; text-align: center; margin-bottom: 16px; }
   .header h1 { color: #1B1B1B; font-size: 24px; }
   .header p { color: #1B1B1B; font-size: 12px; margin-top: 6px; opacity: 0.7; }
+  .summary-bar { background: #FBF8EF; padding: 12px 16px; border-radius: 10px; margin-bottom: 16px; display: flex; justify-content: space-around; }
+  .summary-item { text-align: center; }
+  .summary-num { font-size: 22px; font-weight: 700; color: #0B3D2E; }
+  .summary-label { font-size: 11px; color: #666; margin-top: 2px; text-transform: uppercase; letter-spacing: 0.5px; }
+  .date-group { margin-bottom: 20px; }
+  .date-header { color: #FBF8EF; font-size: 14px; font-weight: 700; margin-bottom: 10px; padding: 8px 12px; background: rgba(212, 175, 55, 0.2); border-left: 3px solid #D4AF37; border-radius: 6px; display: flex; justify-content: space-between; align-items: center; }
+  .date-count { font-weight: 400; font-size: 12px; opacity: 0.8; }
+  .today-badge { background: #FF3B30; color: #FFFFFF; padding: 2px 8px; border-radius: 10px; font-size: 10px; font-weight: 700; margin-left: 8px; }
   .card { background: #FBF8EF; padding: 14px; border-radius: 10px; margin-bottom: 10px; border-left: 4px solid #D4AF37; }
+  .card.today { border-left-color: #FF3B30; box-shadow: 0 0 0 2px rgba(255, 59, 48, 0.2); }
   .match { font-weight: 600; font-size: 15px; margin-bottom: 4px; }
   .league { font-size: 12px; color: #666; margin-bottom: 8px; }
   .prob-bar { background: #E5E5E5; border-radius: 20px; height: 8px; overflow: hidden; margin-bottom: 6px; }
   .prob-fill { background: linear-gradient(90deg, #0B3D2E, #D4AF37); height: 100%; border-radius: 20px; }
   .prob-text { font-size: 13px; font-weight: 600; color: #0B3D2E; display: flex; justify-content: space-between; }
-  .time { font-size: 12px; color: #666; margin-top: 6px; }
   .stats { background: #F1F7F3; padding: 16px; border-radius: 10px; margin-top: 20px; }
   .stats h2 { color: #0B3D2E; font-size: 16px; margin-bottom: 12px; }
   .stat-row { display: flex; justify-content: space-between; padding: 8px 0; border-bottom: 1px solid #ddd; }
@@ -47,6 +55,7 @@
 
         let pending = [];
         let completed = [];
+        const seen = new Set();
 
         rows.forEach(r => {
           if (!r.c) return;
@@ -57,31 +66,82 @@
           const prob = parseFloat(get(4)) || 0;
           const status = get(8);
           const result = get(9);
-          if (!match) return;
-          if (status === "Pending") pending.push({ match, league, kickoff, prob });
+          if (!match || !kickoff) return;
+          const dedupKey = match + "|" + kickoff;
+          if (status === "Pending" && !seen.has(dedupKey)) {
+            seen.add(dedupKey);
+            pending.push({ match, league, kickoff, prob });
+          }
           if (status === "Completed") completed.push({ result });
         });
 
-        pending.sort((a, b) => b.prob - a.prob);
+        pending.sort((a, b) => {
+          const tA = new Date(a.kickoff).getTime();
+          const tB = new Date(b.kickoff).getTime();
+          if (tA !== tB) return tA - tB;
+          return b.prob - a.prob;
+        });
+
+        const now = new Date();
+        const today = new Date(now.getFullYear(), now.getMonth(), now.getDate());
+        const tomorrow = new Date(today.getTime() + 24 * 60 * 60 * 1000);
+
+        const groups = {};
+        pending.forEach(p => {
+          const ko = new Date(p.kickoff);
+          const koDate = new Date(ko.getFullYear(), ko.getMonth(), ko.getDate());
+          const key = koDate.toISOString().split('T')[0];
+          if (!groups[key]) groups[key] = { date: koDate, picks: [] };
+          groups[key].picks.push(p);
+        });
 
         const wins = completed.filter(r => r.result === "Win").length;
         const total = completed.length;
         const hitRate = total > 0 ? (wins / total * 100).toFixed(1) : "—";
 
+        const todayKey = today.toISOString().split('T')[0];
+        const tomorrowKey = tomorrow.toISOString().split('T')[0];
+        const todayCount = groups[todayKey] ? groups[todayKey].picks.length : 0;
+        const tomorrowCount = groups[tomorrowKey] ? groups[tomorrowKey].picks.length : 0;
+
         let html = "";
+        html += `<div class="summary-bar">
+          <div class="summary-item"><div class="summary-num">${todayCount}</div><div class="summary-label">Today</div></div>
+          <div class="summary-item"><div class="summary-num">${tomorrowCount}</div><div class="summary-label">Tomorrow</div></div>
+          <div class="summary-item"><div class="summary-num">${pending.length}</div><div class="summary-label">Total</div></div>
+        </div>`;
+
         if (pending.length === 0) {
           html += '<div class="error">No pending picks found. Run the Colab engine to refresh.</div>';
         } else {
-          html += `<div style="color:#FBF8EF;margin-bottom:12px;font-size:14px;">Showing <strong>${pending.length}</strong> pending picks</div>`;
-          pending.forEach(p => {
-            const probPct = (p.prob * 100).toFixed(1);
-            html += `<div class="card">
-              <div class="match">${p.match}</div>
-              <div class="league">${p.league}</div>
-              <div class="prob-bar"><div class="prob-fill" style="width:${probPct}%"></div></div>
-              <div class="prob-text"><span>HT U1.5</span><span>${probPct}%</span></div>
-              <div class="time">${p.kickoff}</div>
-            </div>`;
+          const sortedKeys = Object.keys(groups).sort();
+          sortedKeys.forEach(key => {
+            const grp = groups[key];
+            const isToday = key === todayKey;
+            const isTomorrow = key === tomorrowKey;
+            let dateLabel;
+            if (isToday) dateLabel = "Today";
+            else if (isTomorrow) dateLabel = "Tomorrow";
+            else dateLabel = grp.date.toLocaleDateString('en-US', { weekday: 'short', month: 'short', day: 'numeric' });
+
+            html += `<div class="date-group">
+              <div class="date-header">
+                <span>${dateLabel}${isToday ? '<span class="today-badge">NOW</span>' : ''}</span>
+                <span class="date-count">${grp.picks.length} pick${grp.picks.length !== 1 ? 's' : ''}</span>
+              </div>`;
+
+            grp.picks.forEach(p => {
+              const probPct = (p.prob * 100).toFixed(1);
+              const timeStr = new Date(p.kickoff).toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit', hour12: false });
+              html += `<div class="card${isToday ? ' today' : ''}">
+                <div class="match">${p.match}</div>
+                <div class="league">${p.league} • ${timeStr}</div>
+                <div class="prob-bar"><div class="prob-fill" style="width:${probPct}%"></div></div>
+                <div class="prob-text"><span>HT U1.5</span><span>${probPct}%</span></div>
+              </div>`;
+            });
+
+            html += `</div>`;
           });
         }
 
