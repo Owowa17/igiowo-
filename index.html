@@ -1,0 +1,105 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Igiowo — HT Under 1.5 Predictions</title>
+<style>
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  body { font-family: -apple-system, BlinkMacSystemFont, sans-serif; background: #0B3D2E; color: #1B1B1B; padding: 16px; min-height: 100vh; }
+  .header { background: #D4AF37; padding: 20px; border-radius: 12px; text-align: center; margin-bottom: 16px; }
+  .header h1 { color: #1B1B1B; font-size: 24px; }
+  .header p { color: #1B1B1B; font-size: 12px; margin-top: 6px; opacity: 0.7; }
+  .card { background: #FBF8EF; padding: 14px; border-radius: 10px; margin-bottom: 10px; border-left: 4px solid #D4AF37; }
+  .match { font-weight: 600; font-size: 15px; margin-bottom: 4px; }
+  .league { font-size: 12px; color: #666; margin-bottom: 8px; }
+  .prob-bar { background: #E5E5E5; border-radius: 20px; height: 8px; overflow: hidden; margin-bottom: 6px; }
+  .prob-fill { background: linear-gradient(90deg, #0B3D2E, #D4AF37); height: 100%; border-radius: 20px; }
+  .prob-text { font-size: 13px; font-weight: 600; color: #0B3D2E; display: flex; justify-content: space-between; }
+  .time { font-size: 12px; color: #666; margin-top: 6px; }
+  .stats { background: #F1F7F3; padding: 16px; border-radius: 10px; margin-top: 20px; }
+  .stats h2 { color: #0B3D2E; font-size: 16px; margin-bottom: 12px; }
+  .stat-row { display: flex; justify-content: space-between; padding: 8px 0; border-bottom: 1px solid #ddd; }
+  .stat-row:last-child { border-bottom: none; }
+  .stat-label { color: #666; font-size: 13px; }
+  .stat-value { font-weight: 700; color: #0B3D2E; font-size: 15px; }
+  .loading { text-align: center; color: #FBF8EF; padding: 40px; font-size: 16px; }
+  .error { background: #FDE2E2; color: #B71C1C; padding: 20px; border-radius: 10px; text-align: center; }
+</style>
+</head>
+<body>
+  <div class="header">
+    <h1>⚽ Igiowo</h1>
+    <p>Daily HT Under 1.5 Predictions</p>
+  </div>
+  <div id="content" class="loading">Loading predictions...</div>
+  <script>
+    const SHEET_ID = "1Vx5V6paYAMivmjDu4tbt3u0x-W7z37W8R1ZqswNulys";
+    const SHEET_NAME = "Daily prediction";
+
+    async function loadData() {
+      try {
+        const url = `https://docs.google.com/spreadsheets/d/${SHEET_ID}/gviz/tq?tqx=out:json&sheet=${encodeURIComponent(SHEET_NAME)}`;
+        const res = await fetch(url);
+        const text = await res.text();
+        const json = JSON.parse(text.substring(47).slice(0, -2));
+        const rows = json.table.rows;
+
+        let pending = [];
+        let completed = [];
+
+        rows.forEach(r => {
+          if (!r.c) return;
+          const get = i => r.c[i] ? (r.c[i].v || r.c[i].f || "") : "";
+          const match = get(1);
+          const league = get(2);
+          const kickoff = get(3);
+          const prob = parseFloat(get(4)) || 0;
+          const status = get(8);
+          const result = get(9);
+          if (!match) return;
+          if (status === "Pending") pending.push({ match, league, kickoff, prob });
+          if (status === "Completed") completed.push({ result });
+        });
+
+        pending.sort((a, b) => b.prob - a.prob);
+
+        const wins = completed.filter(r => r.result === "Win").length;
+        const total = completed.length;
+        const hitRate = total > 0 ? (wins / total * 100).toFixed(1) : "—";
+
+        let html = "";
+        if (pending.length === 0) {
+          html += '<div class="error">No pending picks found. Run the Colab engine to refresh.</div>';
+        } else {
+          html += `<div style="color:#FBF8EF;margin-bottom:12px;font-size:14px;">Showing <strong>${pending.length}</strong> pending picks</div>`;
+          pending.forEach(p => {
+            const probPct = (p.prob * 100).toFixed(1);
+            html += `<div class="card">
+              <div class="match">${p.match}</div>
+              <div class="league">${p.league}</div>
+              <div class="prob-bar"><div class="prob-fill" style="width:${probPct}%"></div></div>
+              <div class="prob-text"><span>HT U1.5</span><span>${probPct}%</span></div>
+              <div class="time">${p.kickoff}</div>
+            </div>`;
+          });
+        }
+
+        html += `<div class="stats">
+          <h2>📊 Track Record</h2>
+          <div class="stat-row"><span class="stat-label">Total Settled</span><span class="stat-value">${total}</span></div>
+          <div class="stat-row"><span class="stat-label">Wins</span><span class="stat-value">${wins}</span></div>
+          <div class="stat-row"><span class="stat-label">Losses</span><span class="stat-value">${total - wins}</span></div>
+          <div class="stat-row"><span class="stat-label">Hit Rate</span><span class="stat-value">${hitRate}%</span></div>
+        </div>`;
+
+        document.getElementById("content").className = "";
+        document.getElementById("content").innerHTML = html;
+      } catch (e) {
+        document.getElementById("content").innerHTML = '<div class="error">Error loading sheet: ' + e.message + '</div>';
+      }
+    }
+    loadData();
+  </script>
+</body>
+</html>
