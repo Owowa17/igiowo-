@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>Igiowo — HT Under 1.5 Predictions</title>
+<title>Igiowo — Predictions Dashboard</title>
 <style>
   * { margin: 0; padding: 0; box-sizing: border-box; }
   body { font-family: -apple-system, BlinkMacSystemFont, sans-serif; background: #0B3D2E; color: #1B1B1B; padding: 16px; min-height: 100vh; }
@@ -23,12 +23,18 @@
   .today-badge { background: #FF3B30; color: #FFFFFF; padding: 2px 8px; border-radius: 10px; font-size: 10px; font-weight: 700; margin-left: 8px; }
   .card { background: #FBF8EF; padding: 14px; border-radius: 10px; margin-bottom: 10px; border-left: 4px solid #D4AF37; }
   .card.today { border-left-color: #FF3B30; box-shadow: 0 0 0 2px rgba(255, 59, 48, 0.2); }
+  .card.draw { border-left-color: #7E22CE; background: #FAF5FF; }
+  .card.draw .prob-fill { background: linear-gradient(90deg, #7E22CE, #D4AF37); }
+  .card.draw .prob-text { color: #7E22CE; }
   .card.win { border-left-color: #1B5E20; }
   .card.loss { border-left-color: #B71C1C; }
   .card.void { border-left-color: #999; opacity: 0.7; }
   .match { font-weight: 600; font-size: 15px; margin-bottom: 4px; }
   .league { font-size: 12px; color: #666; margin-bottom: 8px; }
-  .prob-bar { background: #E5E5E5; border-radius: 20px; height: 8px; overflow: hidden; margin-bottom: 6px; }
+  .market-badge { display: inline-block; padding: 2px 8px; border-radius: 8px; font-size: 10px; font-weight: 700; margin-right: 6px; }
+  .badge-u15 { background: #D4AF37; color: #1B1B1B; }
+  .badge-draw { background: #7E22CE; color: #FFFFFF; }
+  .prob-bar { background: #E5E5E5; border-radius: 20px; height: 8px; overflow: hidden; margin-bottom: 6px; margin-top: 6px; }
   .prob-fill { background: linear-gradient(90deg, #0B3D2E, #D4AF37); height: 100%; border-radius: 20px; }
   .prob-text { font-size: 13px; font-weight: 600; color: #0B3D2E; display: flex; justify-content: space-between; }
   .result-row { display: flex; justify-content: space-between; align-items: center; font-size: 13px; font-weight: 600; margin-top: 4px; }
@@ -51,17 +57,24 @@
   .error { background: #FDE2E2; color: #B71C1C; padding: 20px; border-radius: 10px; text-align: center; }
   .empty { text-align: center; color: #FBF8EF; padding: 30px; font-size: 14px; opacity: 0.8; }
   .hidden { display: none; }
+  .legend { display: flex; gap: 12px; justify-content: center; margin-bottom: 12px; font-size: 11px; color: #FBF8EF; opacity: 0.85; }
+  .legend-dot { display: inline-block; width: 10px; height: 10px; border-radius: 50%; margin-right: 4px; vertical-align: middle; }
 </style>
 </head>
 <body>
   <div class="header">
     <h1>⚽ Igiowo</h1>
-    <p>Daily HT Under 1.5 Predictions</p>
+    <p>Multi-Market Prediction Dashboard</p>
   </div>
 
   <div class="tabs">
     <button class="tab active" id="tabToday" onclick="switchTab('today')">Today</button>
     <button class="tab" id="tabHistory" onclick="switchTab('history')">History</button>
+  </div>
+
+  <div class="legend">
+    <span><span class="legend-dot" style="background:#D4AF37"></span>HT Under 1.5</span>
+    <span><span class="legend-dot" style="background:#7E22CE"></span>HT Draw</span>
   </div>
 
   <div id="todayView">
@@ -99,6 +112,12 @@
       renderHistory();
     }
 
+    function detectMarket(notes) {
+      const n = (notes || "").toLowerCase();
+      if (n.includes("ht-draw") || n.includes("ht draw")) return "draw";
+      return "u15";
+    }
+
     async function loadData() {
       try {
         const url = `https://docs.google.com/spreadsheets/d/${SHEET_ID}/gviz/tq?tqx=out:json&sheet=${encodeURIComponent(SHEET_NAME)}`;
@@ -123,20 +142,49 @@
           const result = get(9);
           const notes = get(10);
           if (!match || !kickoff) return;
-          const dedupKey = match + "|" + kickoff;
+          const market = detectMarket(notes);
+          const dedupKey = match + "|" + kickoff + "|" + market;
           if (status === "Pending" && !seen.has(dedupKey)) {
             seen.add(dedupKey);
-            pending.push({ date, match, league, kickoff, prob });
+            pending.push({ date, match, league, kickoff, prob, notes, market });
           }
-          if (status === "Completed") completed.push({ date, match, league, kickoff, prob, result, notes });
+          if (status === "Completed") completed.push({ date, match, league, kickoff, prob, result, notes, market });
         });
 
         allData = { pending, completed };
         renderToday();
-        if (document.getElementById('historyView').classList.contains('hidden') === false) renderHistory();
+        if (!document.getElementById('historyView').classList.contains('hidden')) renderHistory();
       } catch (e) {
         document.getElementById('todayContent').innerHTML = '<div class="error">Error loading: ' + e.message + '</div>';
       }
+    }
+
+    function renderCard(p, isToday, showResult) {
+      const probPct = (p.prob * 100).toFixed(1);
+      const timeStr = new Date(p.kickoff).toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit', hour12: false });
+      const isDraw = p.market === "draw";
+      const cardClass = isDraw ? "draw" : (isToday ? "today" : "");
+      const badge = isDraw ? '<span class="market-badge badge-draw">🎯 DRAW</span>' : '<span class="market-badge badge-u15">HT U1.5</span>';
+      const label = isDraw ? "HT DRAW" : "HT U1.5";
+      const dateStr = new Date(p.kickoff).toLocaleDateString('en-US', { month: 'short', day: 'numeric' });
+
+      let html = `<div class="card ${cardClass}">
+        <div class="match">${p.match}</div>
+        <div class="league">${badge}${p.league} • ${timeStr}</div>
+        <div class="prob-bar"><div class="prob-fill" style="width:${probPct}%"></div></div>
+        <div class="prob-text"><span>${label}</span><span>${probPct}%</span></div>`;
+
+      if (showResult) {
+        const resultClass = p.result === "Win" ? "result-win" : p.result === "Loss" ? "result-loss" : "result-void";
+        const icon = p.result === "Win" ? "✅" : p.result === "Loss" ? "❌" : "⏸";
+        html += `<div class="result-row">
+          <span class="${resultClass}">${icon} ${p.result}</span>
+          <span class="hit-note">${p.notes || ''}</span>
+        </div>`;
+      }
+
+      html += `</div>`;
+      return html;
     }
 
     function renderToday() {
@@ -165,11 +213,14 @@
 
       const todayCount = groups[todayKey] ? groups[todayKey].picks.length : 0;
       const tomorrowCount = groups[tomorrowKey] ? groups[tomorrowKey].picks.length : 0;
+      const u15Count = pending.filter(p => p.market === "u15").length;
+      const drawCount = pending.filter(p => p.market === "draw").length;
 
       let html = `<div class="summary-bar">
         <div class="summary-item"><div class="summary-num">${todayCount}</div><div class="summary-label">Today</div></div>
         <div class="summary-item"><div class="summary-num">${tomorrowCount}</div><div class="summary-label">Tomorrow</div></div>
-        <div class="summary-item"><div class="summary-num">${pending.length}</div><div class="summary-label">Total</div></div>
+        <div class="summary-item"><div class="summary-num">${u15Count}</div><div class="summary-label">HT U1.5</div></div>
+        <div class="summary-item"><div class="summary-num">${drawCount}</div><div class="summary-label">HT Draw</div></div>
       </div>`;
 
       if (pending.length === 0) {
@@ -191,17 +242,7 @@
               <span class="date-count">${grp.picks.length} pick${grp.picks.length !== 1 ? 's' : ''}</span>
             </div>`;
 
-          grp.picks.forEach(p => {
-            const probPct = (p.prob * 100).toFixed(1);
-            const timeStr = new Date(p.kickoff).toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit', hour12: false });
-            html += `<div class="card${isToday ? ' today' : ''}">
-              <div class="match">${p.match}</div>
-              <div class="league">${p.league} • ${timeStr}</div>
-              <div class="prob-bar"><div class="prob-fill" style="width:${probPct}%"></div></div>
-              <div class="prob-text"><span>HT U1.5</span><span>${probPct}%</span></div>
-            </div>`;
-          });
-
+          grp.picks.forEach(p => { html += renderCard(p, isToday, false); });
           html += `</div>`;
         });
       }
@@ -224,47 +265,49 @@
         });
       }
 
-      const wins = filtered.filter(r => r.result === "Win").length;
-      const losses = filtered.filter(r => r.result === "Loss").length;
-      const voids = filtered.filter(r => r.result === "Void").length;
-      const totalSettled = wins + losses;
-      const hitRate = totalSettled > 0 ? (wins / totalSettled * 100).toFixed(1) : "—";
+      const u15 = filtered.filter(r => r.market === "u15");
+      const draw = filtered.filter(r => r.market === "draw");
+
+      function stats(arr) {
+        const w = arr.filter(r => r.result === "Win").length;
+        const l = arr.filter(r => r.result === "Loss").length;
+        const t = w + l;
+        return { wins: w, losses: l, total: t, hit: t > 0 ? (w / t * 100).toFixed(1) : "—" };
+      }
+
+      const s15 = stats(u15);
+      const sDraw = stats(draw);
 
       let html = "";
 
-      if (totalSettled === 0) {
+      if (filtered.length === 0) {
         html += `<div class="empty">No settled picks yet for this period.<br><br>Results will appear here once matches are completed and marked in the Google Sheet.</div>`;
       } else {
-        html += `<div class="stats">
-          <h2>📊 Track Record</h2>
-          <div class="stat-row"><span class="stat-label">Total Settled</span><span class="stat-value">${totalSettled}</span></div>
-          <div class="stat-row"><span class="stat-label">Wins</span><span class="stat-value" style="color:#1B5E20">${wins}</span></div>
-          <div class="stat-row"><span class="stat-label">Losses</span><span class="stat-value" style="color:#B71C1C">${losses}</span></div>
-          ${voids > 0 ? `<div class="stat-row"><span class="stat-label">Voids</span><span class="stat-value" style="color:#666">${voids}</span></div>` : ''}
-          <div class="stat-row"><span class="stat-label">Hit Rate</span><span class="stat-value">${hitRate}%</span></div>
-          <div class="hit-bar"><div class="hit-fill" style="width:${hitRate}%"></div></div>
-        </div>`;
+        if (s15.total > 0) {
+          html += `<div class="stats">
+            <h2>🎯 HT Under 1.5 Track Record</h2>
+            <div class="stat-row"><span class="stat-label">Total Settled</span><span class="stat-value">${s15.total}</span></div>
+            <div class="stat-row"><span class="stat-label">Wins</span><span class="stat-value" style="color:#1B5E20">${s15.wins}</span></div>
+            <div class="stat-row"><span class="stat-label">Losses</span><span class="stat-value" style="color:#B71C1C">${s15.losses}</span></div>
+            <div class="stat-row"><span class="stat-label">Hit Rate</span><span class="stat-value">${s15.hit}%</span></div>
+            <div class="hit-bar"><div class="hit-fill" style="width:${s15.hit}%"></div></div>
+          </div>`;
+        }
+
+        if (sDraw.total > 0) {
+          html += `<div class="stats" style="background:#FAF5FF;">
+            <h2 style="color:#7E22CE;">🎯 HT Draw Track Record</h2>
+            <div class="stat-row"><span class="stat-label">Total Settled</span><span class="stat-value" style="color:#7E22CE">${sDraw.total}</span></div>
+            <div class="stat-row"><span class="stat-label">Wins</span><span class="stat-value" style="color:#1B5E20">${sDraw.wins}</span></div>
+            <div class="stat-row"><span class="stat-label">Losses</span><span class="stat-value" style="color:#B71C1C">${sDraw.losses}</span></div>
+            <div class="stat-row"><span class="stat-label">Hit Rate</span><span class="stat-value" style="color:#7E22CE">${sDraw.hit}%</span></div>
+            <div class="hit-bar"><div class="hit-fill" style="background:linear-gradient(90deg,#7E22CE,#D4AF37);width:${sDraw.hit}%"></div></div>
+          </div>`;
+        }
 
         const sortedByDate = filtered.slice().sort((a, b) => new Date(b.date || b.kickoff) - new Date(a.date || a.kickoff));
-        html += `<div style="margin-top:20px;"><div class="date-header"><span>Results</span><span class="date-count">${sortedByDate.length} record${sortedByDate.length !== 1 ? 's' : ''}</span></div>`;
-
-        sortedByDate.forEach(c => {
-          const ko = new Date(c.kickoff);
-          const dateStr = ko.toLocaleDateString('en-US', { month: 'short', day: 'numeric' });
-          const probPct = (c.prob * 100).toFixed(1);
-          const resultClass = c.result === "Win" ? "result-win" : c.result === "Loss" ? "result-loss" : "result-void";
-          const cardClass = c.result === "Win" ? "win" : c.result === "Loss" ? "loss" : "void";
-          const icon = c.result === "Win" ? "✅" : c.result === "Loss" ? "❌" : "⏸";
-          html += `<div class="card ${cardClass}">
-            <div class="match">${c.match}</div>
-            <div class="league">${c.league} • ${dateStr}</div>
-            <div class="result-row">
-              <span class="${resultClass}">${icon} ${c.result}</span>
-              <span class="hit-note">${c.notes || 'Predicted: ' + probPct + '%'}</span>
-            </div>
-          </div>`;
-        });
-
+        html += `<div style="margin-top:20px;"><div class="date-header"><span>Recent Results</span><span class="date-count">${sortedByDate.length}</span></div>`;
+        sortedByDate.forEach(c => { html += renderCard(c, false, true); });
         html += `</div>`;
       }
 
@@ -276,4 +319,4 @@
     setInterval(loadData, 120000);
   </script>
 </body>
-</html>
+ </html>
