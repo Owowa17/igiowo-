@@ -23,9 +23,9 @@
   .today-badge { background: #FF3B30; color: #FFFFFF; padding: 2px 8px; border-radius: 10px; font-size: 10px; font-weight: 700; margin-left: 8px; }
   .card { background: #FBF8EF; padding: 14px; border-radius: 10px; margin-bottom: 10px; border-left: 4px solid #D4AF37; }
   .card.today { border-left-color: #FF3B30; box-shadow: 0 0 0 2px rgba(255, 59, 48, 0.2); }
-  .card.draw { border-left-color: #7E22CE; background: #FAF5FF; }
-  .card.draw .prob-fill { background: linear-gradient(90deg, #7E22CE, #D4AF37); }
-  .card.draw .prob-text { color: #7E22CE; }
+  .card.u25 { border-left-color: #7E22CE; background: #FAF5FF; }
+  .card.u25 .prob-fill { background: linear-gradient(90deg, #7E22CE, #D4AF37); }
+  .card.u25 .prob-text { color: #7E22CE; }
   .card.win { border-left-color: #1B5E20; }
   .card.loss { border-left-color: #B71C1C; }
   .card.void { border-left-color: #999; opacity: 0.7; }
@@ -33,7 +33,7 @@
   .league { font-size: 12px; color: #666; margin-bottom: 8px; }
   .market-badge { display: inline-block; padding: 2px 8px; border-radius: 8px; font-size: 10px; font-weight: 700; margin-right: 6px; }
   .badge-u15 { background: #D4AF37; color: #1B1B1B; }
-  .badge-draw { background: #7E22CE; color: #FFFFFF; }
+  .badge-u25 { background: #7E22CE; color: #FFFFFF; }
   .prob-bar { background: #E5E5E5; border-radius: 20px; height: 8px; overflow: hidden; margin-bottom: 6px; margin-top: 6px; }
   .prob-fill { background: linear-gradient(90deg, #0B3D2E, #D4AF37); height: 100%; border-radius: 20px; }
   .prob-text { font-size: 13px; font-weight: 600; color: #0B3D2E; display: flex; justify-content: space-between; }
@@ -74,7 +74,7 @@
 
   <div class="legend">
     <span><span class="legend-dot" style="background:#D4AF37"></span>HT Under 1.5</span>
-    <span><span class="legend-dot" style="background:#7E22CE"></span>HT Draw</span>
+    <span><span class="legend-dot" style="background:#7E22CE"></span>FT Under 2.5</span>
   </div>
 
   <div id="todayView">
@@ -112,9 +112,9 @@
       renderHistory();
     }
 
-    function detectMarket(notes) {
-      const n = (notes || "").toLowerCase();
-      if (n.includes("ht-draw") || n.includes("ht draw")) return "draw";
+    function detectMarket(notes, model) {
+      const n = ((notes || "") + " " + (model || "")).toLowerCase();
+      if (n.includes("ft-u25") || n.includes("ft u2.5") || n.includes("ftu25") || n.includes("u25") || n.includes("under 2.5")) return "u25";
       return "u15";
     }
 
@@ -141,8 +141,9 @@
           const status = get(8);
           const result = get(9);
           const notes = get(10);
+          const model = get(13);
           if (!match || !kickoff) return;
-          const market = detectMarket(notes);
+          const market = detectMarket(notes, model);
           const dedupKey = match + "|" + kickoff + "|" + market;
           if (status === "Pending" && !seen.has(dedupKey)) {
             seen.add(dedupKey);
@@ -162,11 +163,10 @@
     function renderCard(p, isToday, showResult) {
       const probPct = (p.prob * 100).toFixed(1);
       const timeStr = new Date(p.kickoff).toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit', hour12: false });
-      const isDraw = p.market === "draw";
-      const cardClass = isDraw ? "draw" : (isToday ? "today" : "");
-      const badge = isDraw ? '<span class="market-badge badge-draw">🎯 DRAW</span>' : '<span class="market-badge badge-u15">HT U1.5</span>';
-      const label = isDraw ? "HT DRAW" : "HT U1.5";
-      const dateStr = new Date(p.kickoff).toLocaleDateString('en-US', { month: 'short', day: 'numeric' });
+      const isU25 = p.market === "u25";
+      const cardClass = isU25 ? "u25" : (isToday ? "today" : "");
+      const badge = isU25 ? '<span class="market-badge badge-u25">📉 FT U2.5</span>' : '<span class="market-badge badge-u15">HT U1.5</span>';
+      const label = isU25 ? "FT U2.5" : "HT U1.5";
 
       let html = `<div class="card ${cardClass}">
         <div class="match">${p.match}</div>
@@ -214,13 +214,13 @@
       const todayCount = groups[todayKey] ? groups[todayKey].picks.length : 0;
       const tomorrowCount = groups[tomorrowKey] ? groups[tomorrowKey].picks.length : 0;
       const u15Count = pending.filter(p => p.market === "u15").length;
-      const drawCount = pending.filter(p => p.market === "draw").length;
+      const u25Count = pending.filter(p => p.market === "u25").length;
 
       let html = `<div class="summary-bar">
         <div class="summary-item"><div class="summary-num">${todayCount}</div><div class="summary-label">Today</div></div>
         <div class="summary-item"><div class="summary-num">${tomorrowCount}</div><div class="summary-label">Tomorrow</div></div>
         <div class="summary-item"><div class="summary-num">${u15Count}</div><div class="summary-label">HT U1.5</div></div>
-        <div class="summary-item"><div class="summary-num">${drawCount}</div><div class="summary-label">HT Draw</div></div>
+        <div class="summary-item"><div class="summary-num">${u25Count}</div><div class="summary-label">FT U2.5</div></div>
       </div>`;
 
       if (pending.length === 0) {
@@ -266,7 +266,7 @@
       }
 
       const u15 = filtered.filter(r => r.market === "u15");
-      const draw = filtered.filter(r => r.market === "draw");
+      const u25 = filtered.filter(r => r.market === "u25");
 
       function stats(arr) {
         const w = arr.filter(r => r.result === "Win").length;
@@ -276,7 +276,7 @@
       }
 
       const s15 = stats(u15);
-      const sDraw = stats(draw);
+      const s25 = stats(u25);
 
       let html = "";
 
@@ -294,14 +294,14 @@
           </div>`;
         }
 
-        if (sDraw.total > 0) {
+        if (s25.total > 0) {
           html += `<div class="stats" style="background:#FAF5FF;">
-            <h2 style="color:#7E22CE;">🎯 HT Draw Track Record</h2>
-            <div class="stat-row"><span class="stat-label">Total Settled</span><span class="stat-value" style="color:#7E22CE">${sDraw.total}</span></div>
-            <div class="stat-row"><span class="stat-label">Wins</span><span class="stat-value" style="color:#1B5E20">${sDraw.wins}</span></div>
-            <div class="stat-row"><span class="stat-label">Losses</span><span class="stat-value" style="color:#B71C1C">${sDraw.losses}</span></div>
-            <div class="stat-row"><span class="stat-label">Hit Rate</span><span class="stat-value" style="color:#7E22CE">${sDraw.hit}%</span></div>
-            <div class="hit-bar"><div class="hit-fill" style="background:linear-gradient(90deg,#7E22CE,#D4AF37);width:${sDraw.hit}%"></div></div>
+            <h2 style="color:#7E22CE;">📉 FT Under 2.5 Track Record</h2>
+            <div class="stat-row"><span class="stat-label">Total Settled</span><span class="stat-value" style="color:#7E22CE">${s25.total}</span></div>
+            <div class="stat-row"><span class="stat-label">Wins</span><span class="stat-value" style="color:#1B5E20">${s25.wins}</span></div>
+            <div class="stat-row"><span class="stat-label">Losses</span><span class="stat-value" style="color:#B71C1C">${s25.losses}</span></div>
+            <div class="stat-row"><span class="stat-label">Hit Rate</span><span class="stat-value" style="color:#7E22CE">${s25.hit}%</span></div>
+            <div class="hit-bar"><div class="hit-fill" style="background:linear-gradient(90deg,#7E22CE,#D4AF37);width:${s25.hit}%"></div></div>
           </div>`;
         }
 
