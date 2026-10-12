@@ -19,11 +19,9 @@ LEAGUES = ["algir1","eng1","eng2","eng3","esp1","esp2","ita1","ita2","ger1","ger
 # ============================================================
 @st.cache_resource
 def connect_sheet():
-    creds = Credentials.from_service_account_info(
-        dict(st.secrets["gcp_service_account"]),
-        scopes=["https://www.googleapis.com/auth/spreadsheets"]
-    )
-    return gspread.authorize(creds).open_by_key(SHEET_ID).worksheet(TAB)
+    # Read-only via public sheet
+    return None
+    
 
 
 # ============================================================
@@ -173,12 +171,7 @@ def display_dashboard(matches):
     else:
         st.write("No 4+ star FT Under 2.5 picks today.")
 
-    if st.button("💾 Save These Picks to Google Sheet"):
-        try:
-            count = save_picks(u15_picks, u25_picks)
-            st.success("Saved " + str(count) + " picks.")
-        except Exception as e:
-            st.error("Save failed: " + str(e))
+    
 
 
 # ============================================================
@@ -199,6 +192,3 @@ def main():
 
     display_dashboard(st.session_state["matches"])
 
-
-if __name__ == "__main__":
-    main()
