@@ -67,7 +67,7 @@ def check_signal(df):
     up = L.h - max(L.o, L.c)
     rmin = df["rsi"].iloc[-3:].min()
     rmax = df["rsi"].iloc[-3:].max()
-    clm = L.adx < AM
+    clm = L.adx < 0.15
     vol = L.v > 1.2 * L.vavg
 
     cm = P.c <= P.bbl and L.c > L.bbl
