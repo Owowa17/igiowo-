@@ -114,7 +114,7 @@ while True:
         print("\nStopped by user")
         break
     except Exception as e:
-        print("\nErr:", str(e)[:100]
+        print("\nErr:", str(e)[:100])
         time.sleep(5)
 
-    time.sleep(max(1, 62 - (time.time() % 60)
+    time.sleep(max(1, 62 - (time.time() % 60)))
