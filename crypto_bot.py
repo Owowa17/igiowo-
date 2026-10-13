@@ -10,7 +10,6 @@ TF = "1m"
 SM = 4
 EXP = 2
 COOL = 3
-AM = 30
 
 ex = ccxt.okx()
 ex.fetch_ohlcv(S, TF, 5)
@@ -34,8 +33,8 @@ def fetch_candles():
     bb = ta.volatility.BollingerBands(df["c"], 20, 2)
     df["bbu"] = bb.bollinger_hband()
     df["bbl"] = bb.bollinger_lband()
-    adx = ta.trend.ADXIndicator(df["h"], df["l"], df["c"], 14)
-    df["adx"] = adx.adx()
+    df["tr"] = (df["h"] - df["l"]).rolling(14).mean()
+    df["adx"] = (df["tr"] / df["c"]) * 100
     df["vavg"] = df["v"].rolling(20).mean()
     return df
 
@@ -97,8 +96,8 @@ def check_signal(df):
 
 while True:
     try:
-        df["tr"] = (df["h"] - df["l"]).rolling(14).mean()
-df["adx"] = (df["tr"] / df["c"]) * 100
+        df = fetch_candles()
+        ts = int(df["t"].iloc[-1])
 
         if ts != last_ts:
             last_ts = ts
