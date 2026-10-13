@@ -24,7 +24,7 @@ losses = 0
 
 
 def fetch_candles():
-    d = ex.fetch_ohlcv(S, TF, 250)
+    d = ex.fetch_ohlcv(S, TF, 250, {"paginate": True})
     df = pd.DataFrame(d, columns=["t", "o", "h", "l", "c", "v"])
     df = df.iloc[:-1].reset_index(drop=True)
     df["rsi"] = ta.momentum.RSIIndicator(df["c"], 14).rsi()
@@ -97,6 +97,9 @@ def check_signal(df):
 while True:
     try:
         df = fetch_candles()
+        if len(df) < 5:
+            time.sleep(5)
+            continue
         ts = int(df["t"].iloc[-1])
 
         if ts != last_ts:
