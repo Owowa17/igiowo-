@@ -24,7 +24,7 @@ losses = 0
 
 
 def fetch_candles():
-    d = ex.fetch_ohlcv(S, TF, 250, {"paginate": True})
+    d = ex.fetch_ohlcv(S, TF, 250)
     df = pd.DataFrame(d, columns=["t", "o", "h", "l", "c", "v"])
     df = df.iloc[:-1].reset_index(drop=True)
     df["rsi"] = ta.momentum.RSIIndicator(df["c"], 14).rsi()
