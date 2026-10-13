@@ -12,14 +12,9 @@ EXP = 2
 COOL = 3
 AM = 30
 
-ex = None
-for n in ["binance", "bybit", "okx"]:
-    try:
-        ex = getattr(ccxt, n)()
-        ex.fetch_ohlcv(S, TF, 5)
-        print("Using:", n)
-        break
-    except Exception as e:
+ex = ccxt.okx()
+ex.fetch_ohlcv(S, TF, 5)
+print("Using: okx")
         print("Exchange failed:", n, str(e)[:60])
 
 if not ex:
