@@ -15,10 +15,6 @@ AM = 30
 ex = ccxt.okx()
 ex.fetch_ohlcv(S, TF, 5)
 print("Using: okx")
-        print("Exchange failed:", n, str(e)[:60])
-
-if not ex:
-    raise SystemExit("No exchange available")
 
 print("Bot started")
 last_ts = 0
@@ -118,7 +114,7 @@ while True:
         print("\nStopped by user")
         break
     except Exception as e:
-        print("\nErr:", str(e)[:100])
+        print("\nErr:", str(e)[:100]
         time.sleep(5)
 
-    time.sleep(max(1, 62 - (time.time() % 60)))
+    time.sleep(max(1, 62 - (time.time() % 60)
