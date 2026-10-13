@@ -97,8 +97,8 @@ def check_signal(df):
 
 while True:
     try:
-        df = fetch_candles()
-        ts = int(df["t"].iloc[-1])
+        df["tr"] = (df["h"] - df["l"]).rolling(14).mean()
+df["adx"] = (df["tr"] / df["c"]) * 100
 
         if ts != last_ts:
             last_ts = ts
