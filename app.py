@@ -1,6 +1,7 @@
 import streamlit as st
 import io
 import json
+import re
 import requests
 from PIL import Image
 from rapidocr_onnxruntime import RapidOCR
@@ -79,24 +80,17 @@ if uploaded_file is not None:
                         messages=[{"role": "user", "content": prompt}],
                         temperature=0.2,
                     )
- content = response.choices[0].message.content
-
-# --- BULLETPROOF JSON EXTRACTION ---
-try:
-    # Find the first '[' and last ']' to ignore any AI chatter
-    start = content.find('[')
-    end = content.rfind(']')
-    
-    if start != -1 and end != -1:
-        clean_json = content[start:end+1]
-        best_picks = json.loads(clean_json)
-    else:
-        raise ValueError("No JSON brackets found in response")
-        
-except json.JSONDecodeError as e:
-    st.error("❌ AI returned malformed JSON. Retrying might work, or the screenshot might be too blurry.")
-    st.text(f"Raw AI Output: {content}") # This helps us debug
-    st.stop() # Stop the app from crashing further
+                    
+                    content = response.choices[0].message.content
+                    
+                    # --- BULLETPROOF JSON EXTRACTION (Regex) ---
+                    # This finds the first '[' and the last ']' even if the AI writes a paragraph
+                    match = re.search(r'\[.*\]', content, re.DOTALL)
+                    
+                    if match:
+                        # Extract just the JSON string
+                        clean_json = match.group(0)
+                        best_picks = json.loads(clean_json)
                         
                         st.success(f"🦈 AI Hunter found {len(best_picks)} volatile opportunities!")
                         
@@ -140,6 +134,8 @@ except json.JSONDecodeError as e:
                                 except Exception as e:
                                     pass
                     else:
-                        st.error("❌ AI did not return valid JSON.")
+                        st.error("❌ AI did not return a JSON array.")
+                        st.text(content)
+                        
                 except Exception as e:
                     st.error(f"❌ AI Error: {e}")
