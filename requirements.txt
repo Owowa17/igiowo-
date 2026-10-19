@@ -3,3 +3,6 @@ requests
 gspread
 google-auth
 pandas
+rapidocr_onnxruntime
+groq
+pillow
