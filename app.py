@@ -20,7 +20,7 @@ GROQ_API_KEY = "gsk_YOUR_ACTUAL_NEW_KEY"
 uploaded_file = st.file_uploader("Upload a screenshot (PNG or JPG)", type=["png", "jpg", "jpeg"])
 
 if uploaded_file is not None:
-    image = Image.open(uploaded_file)
+    image = Image.open(uploaded_file).
     st.image(image, caption="Uploaded Screenshot", use_column_width=True)
 
     with st.spinner("👁️ Scanning image with OCR..."):
