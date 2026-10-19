@@ -79,14 +79,24 @@ if uploaded_file is not None:
                         messages=[{"role": "user", "content": prompt}],
                         temperature=0.2,
                     )
-                    
-                    content = response.choices[0].message.content
-                    start = content.find('[')
-                    end = content.rfind(']')
-                    
-                    if start != -1 and end != -1:
-                        clean_json = content[start:end+1]
-                        best_picks = json.loads(clean_json)
+ content = response.choices[0].message.content
+
+# --- BULLETPROOF JSON EXTRACTION ---
+try:
+    # Find the first '[' and last ']' to ignore any AI chatter
+    start = content.find('[')
+    end = content.rfind(']')
+    
+    if start != -1 and end != -1:
+        clean_json = content[start:end+1]
+        best_picks = json.loads(clean_json)
+    else:
+        raise ValueError("No JSON brackets found in response")
+        
+except json.JSONDecodeError as e:
+    st.error("❌ AI returned malformed JSON. Retrying might work, or the screenshot might be too blurry.")
+    st.text(f"Raw AI Output: {content}") # This helps us debug
+    st.stop() # Stop the app from crashing further
                         
                         st.success(f"🦈 AI Hunter found {len(best_picks)} volatile opportunities!")
                         
