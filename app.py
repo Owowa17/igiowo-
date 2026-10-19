@@ -1,134 +1,129 @@
 import streamlit as st
+import io
+import json
 import requests
-import datetime
-import math
+from PIL import Image
+from rapidocr_onnxruntime import RapidOCR
+from groq import Groq
+from datetime import datetime
 
-st.set_page_config(page_title="Igiowo", page_icon="⚽", layout="centered")
+#--- PAGE CONFIGURATION ---
+st.set_page_config(page_title="Volatile Market Hunter", page_icon="🦈", layout="centered")
+st.title("🦈 AI High-Value Market Hunter")
+st.write("Upload a screenshot. The AI will hunt for weak markets, traps, and volatile high-odds opportunities.")
 
-SHEET_ID = "1Vx5V6paYAMivmjDu4tbt3u0x-W7z37W8R1ZqswNulys"
-FC_URL = "https://footballcharts-backend.onrender.com/api/v1"
-LEAGUES = ["algir1","eng1","eng2","eng3","esp1","esp2","ita1","ita2","ger1","ger2","fra1","fra2","por1","ned1","bel1","tur1","sco1","arg1","japan1","greece1","brazil1","brazil2","egypt1","morocco1","saudi1","saudi2"]
+#--- CONFIGURATION (PASTE YOUR KEYS HERE) ---
+GOOGLE_SHEET_URL = "https://script.google.com/macros/s/YOUR_ACTUAL_URL/exec"
+GROQ_API_KEY = "gsk_YOUR_ACTUAL_NEW_KEY"
 
-st.title("⚽ Igiowo")
-st.caption("Multi-Market Prediction Engine · 26 leagues · 3 markets")
+#--- FILE UPLOADER ---
+uploaded_file = st.file_uploader("Upload a screenshot (PNG or JPG)", type=["png", "jpg", "jpeg"])
 
+if uploaded_file is not None:
+    image = Image.open(uploaded_file)
+    st.image(image, caption="Uploaded Screenshot", use_column_width=True)
 
-def fetch_all():
-    H = {"Authorization": "Bearer " + st.secrets["FC_API_KEY"]}
-    all_m = []
-    for lg in LEAGUES:
-        try:
-            r = requests.get(FC_URL + "/leagues/" + lg + "/fixtures/", headers=H, timeout=30).json().get("matches", []) or []
-            all_m.extend(r)
-        except Exception:
-            pass
-    return all_m
+    with st.spinner("👁️ Scanning image with OCR..."):
+        ocr = RapidOCR()
+        temp_path = "temp_screenshot.png"
+        image.save(temp_path)
 
+        result, _ = ocr(temp_path)
 
-def rate_u15(p):
-    return (1 if (1-p["raw_over"]) >= 0.78 else 0) + (1 if (1-p["cal_over"]) >= 0.78 else 0) + (1 if abs(p["raw_over"]-p["cal_over"]) <= 0.05 else 0) + (1 if (p.get("exp_ht") or 99) <= 1.30 else 0) + (1 if 0.30 <= (p.get("ht05") or 0) <= 0.70 else 0)
+        if not result:
+            st.warning("⚠️ No text found in the image. Please try a clearer screenshot.")
+        else:
+            extracted_lines = [line[1] for line in result]
+            raw_ocr_text = "\n".join(extracted_lines)
 
+            with st.spinner("🧠 Hunting for high-value volatility with Groq..."):
+                client = Groq(api_key=GROQ_API_KEY)
 
-def rate_u25(p):
-    return (1 if p["raw_u25"] >= 0.75 else 0) + (1 if p["cal_u25"] >= 0.75 else 0) + (1 if abs(p["raw_u25"]-p["cal_u25"]) <= 0.05 else 0) + (1 if (p.get("exp_home") or 9) + (p.get("exp_away") or 9) <= 2.30 else 0) + (1 if (p.get("over15") or 99) <= 0.70 else 0)
+#--- THE ULTIMATE VOLATILE PROMPT ---
+                prompt = f"""
+                You are a ruthless, highly experienced sports betting analyst known as the "Volatile Market Hunter". Your job is to find high-value traps, weak markets, and explosive odds. 
 
+                I have scanned a live/pre-match football betting screen. Here is the raw text:
+                {raw_ocr_text}
 
-poisson_pmf = lambda k, lam: 0 if lam <= 0 else (lam ** k) * math.exp(-lam) / math.factorial(k)
-score_prob = lambda h, a, lh, la: poisson_pmf(h, lh) * poisson_pmf(a, la)
+                LEAGUE-SPECIFIC RULES:
+· If the league is 'Serie A', favor 'Under 2.5 Goals'.
+· If the league is 'Eredivisie', favor 'Over 3.5 Goals'.
+· If the league is in a low-tier or obscure division, look for 'Draw (High Value)' if the odds are completely unbalanced.
 
+                HOW TO THINK (FEW-SHOT EXAMPLES):
+· Trap Spotting: If Team A is winning 2-0 at 80:00 but their odds to win are still 4.50, this is a massive trap. The bookie is begging you to bet on Team A. Pick 'Under 3.5 Goals' or 'Next Goal - Team 2'.
+· HT/FT Value: If it's 0-0 at Half Time, and the draw odds are > 3.00, pick 'Draw (High Value)'. If a heavy favorite is 0-0 at HT, pick 'Over 1.5 Goals (2nd Half)'.
+· Volatile Markets: If you see Correct Score, Half-Time Winner, or Quarter Winner odds in the text, you are allowed to pick them if the value is explosive (e.g., picking a Correct Score of 3-2 at odds of 25.00).
 
-if st.button("🔄 Fetch Fresh Picks", type="primary", use_container_width=True):
-    with st.spinner("Fetching 26 leagues from Football-Charts..."):
-        st.session_state["matches"] = fetch_all()
-    st.success("Fetched " + str(len(st.session_state["matches"])) + " fixtures")
+                YOUR TASK:
+                Extract the matches and hunt for the BEST high-value picks. Be aggressive with high-risk markets if the odds justify it, but calculate your confidence based on the volatility.
 
+                Return a JSON array. For each match, provide exactly these keys:
+· "time"
+· "league"
+· "team1"
+· "team2"
+· "odds_1"
+· "odds_x"
+· "odds_2"
+· "pick": Your specific high-value pick (e.g., 'Correct Score 2-1', 'Half-Time Draw', 'Under 3.5 Goals', 'Live Boost Value').
+· "confidence": An integer (1-100). Be honest. If it's a wild Correct Score pick, confidence should be low (e.g., 15%). If it's a trap Under 3.5, confidence should be high (e.g., 85%).
 
-if "matches" not in st.session_state:
-    st.info("Tap 'Fetch Fresh Picks' to load today's predictions.")
-    st.caption("Data source: Football-Charts API · Updated live")
-    st.stop()
+                Return ONLY valid JSON. Do not include markdown, backticks, or conversational text. Just the JSON array.
+                """
 
+                try:
+                    response = client.chat.completions.create(
+                        model="openai/gpt-oss-120b",
+                        messages=[{"role": "user", "content": prompt}],
+                        temperature=0.2, # Slightly increased temp to allow the AI to be creative with volatile markets
+                    )
 
-matches = st.session_state["matches"]
-today = datetime.datetime.now().strftime("%Y-%m-%d")
-tomorrow = (datetime.datetime.now() + datetime.timedelta(days=1)).strftime("%Y-%m-%d")
+                    content = response.choices[0].message.content
+                    start = content.find('[')
+                    end = content.rfind(']')
 
-u15_picks = []
-u25_picks = []
-cs_picks = []
+                    if start != -1 and end != -1:
+                        clean_json = content[start:end+1]
+                        best_picks = json.loads(clean_json)
 
-for m in matches:
-    mp = (m.get("model_predictions") or {}).get("dc_v2", {}).get("raw", {})
-    cal = (m.get("model_predictions") or {}).get("dc_v2", {}).get("calibrated", {})
-    date = m.get("match_date", "")
-    if date not in [today, tomorrow]:
-        continue
+                        st.success(f"🦈 AI Hunter found {len(best_picks)} volatile opportunities!")
 
-    # HT Under 1.5
-    if mp.get("ht_over_1.5") is not None and cal.get("ht_over_1.5") is not None:
-        if (1 - mp["ht_over_1.5"]) >= 0.78 and (1 - cal["ht_over_1.5"]) >= 0.78:
-            p = {"home": m.get("home_team",""), "away": m.get("away_team",""), "league": m.get("real_league_name",""), "country": m.get("country",""), "date": date, "time": m.get("time","00:00"), "raw_over": mp["ht_over_1.5"], "cal_over": cal["ht_over_1.5"], "exp_ht": mp.get("expected_ht_goals"), "ht05": mp.get("ht_over_0.5")}
-            p["stars"] = rate_u15(p)
-            if p["stars"] >= 4: u15_picks.append(p)
+                        today_date = datetime.now().strftime("%Y-%m-%d")
 
-    # FT Under 2.5
-    if mp.get("over_2.5") is not None and cal.get("over_2.5") is not None:
-        if (1 - mp["over_2.5"]) >= 0.72 and (1 - cal["over_2.5"]) >= 0.72:
-            p = {"home": m.get("home_team",""), "away": m.get("away_team",""), "league": m.get("real_league_name",""), "country": m.get("country",""), "date": date, "time": m.get("time","00:00"), "raw_u25": 1 - mp["over_2.5"], "cal_u25": 1 - cal["over_2.5"], "exp_home": mp.get("expected_home_goals"), "exp_away": mp.get("expected_away_goals"), "over15": mp.get("over_1.5")}
-            p["stars"] = rate_u25(p)
-            if p["stars"] >= 4: u25_picks.append(p)
+                        for pick in best_picks:
+Use color-coded confidence
+                            conf = int(pick['confidence'])
+                            if conf >= 75:
+                                conf_color = "green"
+                                risk_level = "LOW RISK (High Confidence)"
+                            elif conf >= 50:
+                                conf_color = "orange"
+                                risk_level = "MEDIUM RISK"
+                            else:
+                                conf_color = "red"
+                                risk_level = "HIGH RISK / VOLATILE"
 
-    # Correct Score (low-scoring matches only)
-    eh, ea = mp.get("expected_home_goals"), mp.get("expected_away_goals")
-    if eh is not None and ea is not None and (eh + ea) <= 2.60:
-        probs = {"0-0": score_prob(0,0,eh,ea), "1-0": score_prob(1,0,eh,ea), "0-1": score_prob(0,1,eh,ea), "1-1": score_prob(1,1,eh,ea), "2-0": score_prob(2,0,eh,ea), "0-2": score_prob(0,2,eh,ea)}
-        best_score = max(probs, key=probs.get)
-        best_prob = probs[best_score]
-        if best_prob >= 0.10:
-            cs_picks.append({"home": m.get("home_team",""), "away": m.get("away_team",""), "league": m.get("real_league_name",""), "country": m.get("country",""), "date": date, "time": m.get("time","00:00"), "score": best_score, "prob": best_prob, "fair": round(1/best_prob, 2), "xg": round(eh+ea, 2)})
+                            with st.expander(f"⚽ {pick['team1']} vs {pick['team2']} - {risk_level}"):
+                                st.write(f"League: {pick['league']} | Time: {pick['time']}")
+                                st.write(f"1X2 Odds: {pick['odds_1']} / {pick['odds_x']} / {pick['odds_2']}")
+                                st.markdown(f"Pick: <span style='font-size:20px; color:blue; font-weight:bold;'>{pick['pick']}</span>", unsafe_allow_html=True)
+                                st.markdown(f"Confidence: <span style='color:{conf_color}; font-weight:bold;'>{pick['confidence']}%</span>", unsafe_allow_html=True)
 
-u15_picks.sort(key=lambda x: x["stars"], reverse=True)
-u25_picks.sort(key=lambda x: x["stars"], reverse=True)
-cs_picks.sort(key=lambda x: x["prob"], reverse=True)
+                                payload = {
+                                    "date": today_date, "time": pick['time'], "league": pick['league'],
+                                    "team1": pick['team1'], "team2": pick['team2'], "odds": pick['odds_1'],
+                                    "m1": pick['odds_x'], "m2": pick['odds_2'], "Pick": pick['pick'], "Confidence": pick['confidence']
+                                }
 
-
-st.divider()
-st.subheader("📊 Today's Summary")
-c1, c2, c3 = st.columns(3)
-c1.metric("HT U1.5", len(u15_picks))
-c2.metric("FT U2.5", len(u25_picks))
-c3.metric("Correct Score", len(cs_picks))
-
-
-st.divider()
-st.subheader("🎯 HT Under 1.5 — Top Picks")
-if u15_picks:
-    for p in u15_picks[:5]:
-        prob = round((1 - p["raw_over"]) * 100, 1)
-        st.write("*" * p["stars"] + " **" + p["home"] + " vs " + p["away"] + "** · " + p["league"] + " · " + str(prob) + "% · _HT U1.5_")
-else:
-    st.write("_No 4+ star HT U1.5 picks today._")
-
-
-st.divider()
-st.subheader("📉 FT Under 2.5 — Top Picks")
-if u25_picks:
-    for p in u25_picks[:5]:
-        prob = round(p["raw_u25"] * 100, 1)
-        st.write("*" * p["stars"] + " **" + p["home"] + " vs " + p["away"] + "** · " + p["league"] + " · " + str(prob) + "% · _FT U2.5_")
-else:
-    st.write("_No 4+ star FT U2.5 picks today._")
-
-
-st.divider()
-st.subheader("⚽ Correct Score — Top Picks")
-if cs_picks:
-    for p in cs_picks[:5]:
-        st.write("**" + p["home"] + " vs " + p["away"] + "** · " + p["league"] + " · Score: **" + p["score"] + "** · Prob: " + str(round(p["prob"]*100,1)) + "% · Fair odds: " + str(p["fair"]) + " · xG: " + str(p["xg"]))
-else:
-    st.write("_No low-scoring matches today._")
-
-
-st.divider()
-st.caption("📋 Full track record: owowa17.github.io/igiowo-/")
-st.caption("Probabilities are for informational purposes. No guarantee of profit. 18+. Gamble responsibly.")
+                                try:
+                                    sheet_response = requests.post(GOOGLE_SHEET_URL, json=payload)
+                                    if sheet_response.status_code == 200:
+                                        st.write("✅ Saved to Google Sheets")
+                                except Exception as e:
+                                    st.error(f"❌ Sheet Error: {e}")
+                    else:
+                        st.error("❌ AI did not return valid JSON.")
+                except Exception as e:
+                    st.error(f"❌ AI Error: {e}")
