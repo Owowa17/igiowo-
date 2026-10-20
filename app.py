@@ -80,7 +80,7 @@ with tab1:
                     
                     try:
                         response = client.chat.completions.create(
-                            model="llama-3.3-70b-versatile", # UPGRADED MODEL
+                            model="llama-3.1-8b-instant", # UPGRADED MODEL
                             messages=[{"role": "user", "content": prompt}],
                             temperature=0.1,
                         )
