@@ -62,25 +62,25 @@ with tab1:
                 with st.spinner("🧠 Hunting for high-value volatility..."):
                     client = Groq(api_key=GROQ_API_KEY)
                     
-                      # ULTRA-STRICT PROMPT WITH SMART MODEL
-prompt = f"""
-You are a ruthless sports betting analyst. 
-Raw text: {raw_ocr_text}
-
-YOUR TASK: Find the single most likely outcome for each match based on the 1X2 odds provided. 
-
-RULES:
-1. You MUST pick a specific market: 'Home Win', 'Away Win', 'Draw', 'Over 2.5 Goals', or 'Both Teams to Score'.
-2. Do NOT output 'No Value'. You must make a prediction.
-3. Confidence: Look at the lowest odds. If a team is 1.40 or lower, confidence should be 80%+. If the odds are tight (e.g., 2.10, 3.20, 2.80), confidence should be 45-55%.
-
-Return a JSON array with keys: "time", "league", "team1", "team2", "odds_1", "odds_x", "odds_2", "pick", "confidence".
-Return ONLY valid JSON.
-"""
+                    # THE OPTIMIZED PROMPT
+                    prompt = f"""
+                    You are a ruthless sports betting analyst. 
+                    Raw text: {raw_ocr_text}
+                    
+                    YOUR TASK: Find the single most likely outcome for each match based on the 1X2 odds provided. 
+                    
+                    RULES:
+                    1. You MUST pick a specific market: 'Home Win', 'Away Win', 'Draw', 'Over 2.5 Goals', or 'Both Teams to Score'.
+                    2. Do NOT output 'No Value'. You must make a prediction.
+                    3. Confidence: Look at the lowest odds. If a team is 1.40 or lower, confidence should be 80%+. If the odds are tight (e.g., 2.10, 3.20, 2.80), confidence should be 45-55%.
+                    
+                    Return a JSON array with keys: "time", "league", "team1", "team2", "odds_1", "odds_x", "odds_2", "pick", "confidence".
+                    Return ONLY valid JSON.
+                    """
                     
                     try:
                         response = client.chat.completions.create(
-                            model="openai/gpt-oss-120b", # UPGRADED MODEL
+                            model="openai/gpt-oss-120b", # Current active model on Groq
                             messages=[{"role": "user", "content": prompt}],
                             temperature=0.1,
                         )
@@ -94,7 +94,6 @@ Return ONLY valid JSON.
                             today_date = datetime.now().strftime("%Y-%m-%d")
                             
                             for pick in best_picks:
-                                # Force confidence to be an integer
                                 try:
                                     conf = int(float(pick.get('confidence', 0)))
                                 except:
@@ -141,7 +140,6 @@ with tab2:
                 if 'Profit' not in df.columns:
                     df['Profit'] = 0.0
 
-                # Clean data for calculations
                 df['Profit'] = pd.to_numeric(df['Profit'], errors='coerce').fillna(0)
 
                 total_bets = len(df)
