@@ -5,6 +5,7 @@ import re
 import requests
 import gspread
 import pandas as pd
+import time
 from google.oauth2.service_account import Credentials
 from PIL import Image
 from rapidocr_onnxruntime import RapidOCR
@@ -12,12 +13,13 @@ from groq import Groq
 from datetime import datetime
 
 # --- PAGE CONFIGURATION ---
-st.set_page_config(page_title="Volatile Market Hunter", page_icon="🦈", layout="wide")
-st.title("🦈 AI High-Value Market Hunter")
+st.set_page_config(page_title="Volatile Market Hunter PRO", page_icon="🦈", layout="wide")
+st.title("🦈 AI Market Hunter + Real-Time Stats")
 
 # --- CONFIGURATION ---
 GOOGLE_SHEET_URL = st.secrets["GOOGLE_SHEET_URL"]
 GROQ_API_KEY = st.secrets["GROQ_API_KEY"]
+API_FOOTBALL_KEY = st.secrets["API_FOOTBALL_KEY"]
 
 # --- GOOGLE SHEETS CONNECTION ---
 @st.cache_resource
@@ -34,6 +36,52 @@ def get_sheet_connection():
 
 sheet = get_sheet_connection()
 
+# --- REAL-TIME STATS API FUNCTION ---
+def fetch_team_stats(team_name, api_key):
+    """Fetches the last 5 matches for a team using Direct API-Football"""
+    headers = {
+        "x-apisports-key": api_key # Direct API key header
+    }
+    
+    # 1. Search for the team ID
+    search_url = f"https://v3.football.api-sports.io/teams?search={team_name}"
+    try:
+        search_res = requests.get(search_url, headers=headers).json()
+        if not search_res.get('response'):
+            return None 
+        
+        team_id = search_res['response'][0]['team']['id']
+        
+        # 2. Get last 5 matches
+        fixtures_url = f"https://v3.football.api-sports.io/fixtures?team={team_id}&last=5"
+        fixtures_res = requests.get(fixtures_url, headers=headers).json()
+        
+        if not fixtures_res.get('response'):
+            return None
+            
+        goals_scored = 0
+        goals_conceded = 0
+        
+        for fixture in fixtures_res['response']:
+            home_id = fixture['teams']['home']['id']
+            home_goals = fixture['goals']['home'] or 0
+            away_goals = fixture['goals']['away'] or 0
+            
+            if home_id == team_id:
+                goals_scored += home_goals
+                goals_conceded += away_goals
+            else:
+                goals_scored += away_goals
+                goals_conceded += home_goals
+                
+        return {
+            "avg_scored": round(goals_scored / 5, 2),
+            "avg_conceded": round(goals_conceded / 5, 2),
+            "total_goals_last_5": goals_scored + goals_conceded
+        }
+    except Exception as e:
+        return None
+
 # --- CREATE TABS ---
 tab1, tab2 = st.tabs(["📸 Scanner", "📊 Tracker & Performance"])
 
@@ -47,7 +95,7 @@ with tab1:
         img = Image.open(uploaded_file)
         st.image(img, caption="Uploaded Screenshot", use_column_width=True)
         
-        with st.spinner("👁️ Scanning image with OCR..."):
+        with st.spinner("👁️ Step 1: Extracting matches from image..."):
             ocr = RapidOCR()
             temp_path = "temp_screenshot.png"
             img.save(temp_path)
@@ -59,69 +107,100 @@ with tab1:
                 extracted_lines = [line[1] for line in result]
                 raw_ocr_text = "\n".join(extracted_lines)
                 
-                with st.spinner("🧠 Hunting for high-value volatility..."):
-                    client = Groq(api_key=GROQ_API_KEY)
+                # STEP 1: AI EXTRACTS BASIC DATA
+                client = Groq(api_key=GROQ_API_KEY)
+                extract_prompt = f"""
+                Extract the matches from this text: {raw_ocr_text}
+                Return a JSON array with keys: "time", "league", "team1", "team2", "odds_1", "odds_x", "odds_2".
+                Return ONLY valid JSON.
+                """
+                
+                try:
+                    response = client.chat.completions.create(
+                        model="openai/gpt-oss-120b",
+                        messages=[{"role": "user", "content": extract_prompt}],
+                        temperature=0.1,
+                    )
+                    content = response.choices[0].message.content
+                    match = re.search(r'\[.*\]', content, re.DOTALL)
                     
-                    # THE OPTIMIZED PROMPT
-                    prompt = f"""
-                    You are a ruthless sports betting analyst. 
-                    Raw text: {raw_ocr_text}
-                    
-                    YOUR TASK: Find the single most likely outcome for each match based on the 1X2 odds provided. 
-                    
-                    RULES:
-                    1. You MUST pick a specific market: 'Home Win', 'Away Win', 'Draw', 'Over 2.5 Goals', or 'Both Teams to Score'.
-                    2. Do NOT output 'No Value'. You must make a prediction.
-                    3. Confidence: Look at the lowest odds. If a team is 1.40 or lower, confidence should be 80%+. If the odds are tight (e.g., 2.10, 3.20, 2.80), confidence should be 45-55%.
-                    
-                    Return a JSON array with keys: "time", "league", "team1", "team2", "odds_1", "odds_x", "odds_2", "pick", "confidence".
-                    Return ONLY valid JSON.
-                    """
-                    
-                    try:
-                        response = client.chat.completions.create(
-                            model="openai/gpt-oss-120b", # Current active model on Groq
-                            messages=[{"role": "user", "content": prompt}],
-                            temperature=0.1,
-                        )
-                        content = response.choices[0].message.content
-                        match = re.search(r'\[.*\]', content, re.DOTALL)
+                    if match:
+                        matches = json.loads(match.group(0))
+                        st.success(f"✅ Extracted {len(matches)} matches. Fetching real-time stats...")
                         
-                        if match:
-                            best_picks = json.loads(match.group(0))
-                            st.success(f"🦈 Found {len(best_picks)} opportunities!")
-                            
+                        # STEP 2: FETCH STATS AND PREDICT
+                        with st.spinner("🧠 Step 2: Fetching Team Stats and Predicting..."):
                             today_date = datetime.now().strftime("%Y-%m-%d")
+                            final_picks = []
                             
-                            for pick in best_picks:
-                                try:
-                                    conf = int(float(pick.get('confidence', 0)))
-                                except:
-                                    conf = 0
-
-                                risk = "LOW" if conf >= 75 else "MED" if conf >= 50 else "HIGH"
+                            for m in matches:
+                                t1 = m.get('team1', '')
+                                t2 = m.get('team2', '')
                                 
-                                with st.expander(f"⚽ {pick.get('team1')} vs {pick.get('team2')} - {risk} RISK"):
-                                    st.write(f"**Pick:** {pick.get('pick')} | **Confidence:** {conf}%")
-                                    st.write(f"**Odds:** {pick.get('odds_1')} / {pick.get('odds_x')} / {pick.get('odds_2')}")
+                                # Fetch stats
+                                stats1 = fetch_team_stats(t1, API_FOOTBALL_KEY)
+                                time.sleep(0.5) # Delay to respect free tier limits
+                                stats2 = fetch_team_stats(t2, API_FOOTBALL_KEY)
+                                time.sleep(0.5)
+                                
+                                # Build context string
+                                context = ""
+                                if stats1: context += f"{t1} last 5 games: Scored {stats1['avg_scored']}/game, Conceded {stats1['avg_conceded']}/game. "
+                                if stats2: context += f"{t2} last 5 games: Scored {stats2['avg_scored']}/game, Conceded {stats2['avg_conceded']}/game. "
+                                
+                                if not context:
+                                    context = "No historical stats available. Rely on odds."
+                                
+                                # Final AI Prediction with Context
+                                predict_prompt = f"""
+                                You are a betting expert. Match: {t1} vs {t2}.
+                                Odds: 1={m.get('odds_1')}, X={m.get('odds_x')}, 2={m.get('odds_2')}.
+                                Context: {context}
+                                
+                                Based on the odds and the goal stats, pick the best market: 'Over 2.5 Goals', 'Under 2.5 Goals', 'Home Win', 'Away Win', or 'Draw'.
+                                Return ONLY JSON with keys: "pick" and "confidence" (1-100).
+                                """
+                                
+                                p_res = client.chat.completions.create(
+                                    model="openai/gpt-oss-120b",
+                                    messages=[{"role": "user", "content": predict_prompt}],
+                                    temperature=0.1,
+                                )
+                                
+                                p_match = re.search(r'\{.*\}', p_res.choices[0].message.content, re.DOTALL)
+                                pick_data = json.loads(p_match.group(0)) if p_match else {"pick": "No Value", "confidence": 0}
+                                
+                                # Combine everything
+                                final_entry = {
+                                    "time": m.get('time'), "league": m.get('league'),
+                                    "team1": t1, "team2": t2,
+                                    "odds": m.get('odds_1'), "m1": m.get('odds_x'), "m2": m.get('odds_2'),
+                                    "Pick": pick_data.get('pick'), "Confidence": int(float(pick_data.get('confidence', 0))),
+                                    "Context": context
+                                }
+                                final_picks.append(final_entry)
+                                
+                                # Send to Sheet
+                                payload = {
+                                    "date": today_date, "time": final_entry["time"], "league": final_entry["league"],
+                                    "team1": final_entry["team1"], "team2": final_entry["team2"],
+                                    "odds": final_entry["odds"], "m1": final_entry["m1"], "m2": final_entry["m2"],
+                                    "Pick": final_entry["Pick"], "Confidence": str(final_entry["Confidence"])
+                                }
+                                requests.post(GOOGLE_SHEET_URL, json=payload)
+                            
+                            # Display Results
+                            for p in final_picks:
+                                conf = p['Confidence']
+                                risk = "LOW" if conf >= 75 else "MED" if conf >= 50 else "HIGH"
+                                with st.expander(f"⚽ {p['team1']} vs {p['team2']} - {risk} RISK"):
+                                    st.write(f"**Pick:** {p['Pick']} | **Confidence:** {conf}%")
+                                    st.info(f"📊 **Stats Context:** {p['Context']}")
                                     
-                                    payload = {
-                                        "date": str(today_date),
-                                        "time": str(pick.get('time', '')),
-                                        "league": str(pick.get('league', '')),
-                                        "team1": str(pick.get('team1', '')),
-                                        "team2": str(pick.get('team2', '')),
-                                        "odds": str(pick.get('odds_1', '')),
-                                        "m1": str(pick.get('odds_x', '')),
-                                        "m2": str(pick.get('odds_2', '')),
-                                        "Pick": str(pick.get('pick', '')),
-                                        "Confidence": str(conf)
-                                    }
-                                    requests.post(GOOGLE_SHEET_URL, json=payload)
-                        else:
-                            st.error("❌ AI did not return JSON.")
-                    except Exception as e:
-                        st.error(f"❌ AI Error: {e}")
+                    else:
+                        st.error("❌ AI could not extract matches.")
+                except Exception as e:
+                    st.error(f"❌ Error: {e}")
 
 # ==========================================
 # TAB 2: THE TRACKER & PERFORMANCE
@@ -135,10 +214,8 @@ with tab2:
             if data:
                 df = pd.DataFrame(data)
                 
-                if 'Result' not in df.columns:
-                    df['Result'] = ''
-                if 'Profit' not in df.columns:
-                    df['Profit'] = 0.0
+                if 'Result' not in df.columns: df['Result'] = ''
+                if 'Profit' not in df.columns: df['Profit'] = 0.0
 
                 df['Profit'] = pd.to_numeric(df['Profit'], errors='coerce').fillna(0)
 
@@ -173,10 +250,8 @@ with tab2:
                             
                             if btn_col1.button("✅ Win", key=f"win_{index}"):
                                 row_num = index + 2
-                                try:
-                                    profit = float(row['Odds']) - 1.0
-                                except:
-                                    profit = 0.0
+                                try: profit = float(row['Odds']) - 1.0
+                                except: profit = 0.0
                                 sheet.update_cell(row_num, 11, "Win")
                                 sheet.update_cell(row_num, 12, profit)
                                 st.rerun()
@@ -195,5 +270,3 @@ with tab2:
                 st.info("No data yet. Scan a screenshot to get started.")
         except Exception as e:
             st.error(f"Error loading tracker: {e}")
-    else:
-        st.error("Could not connect to Google Sheets. Check secrets.")
