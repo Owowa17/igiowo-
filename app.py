@@ -62,9 +62,17 @@ with tab1:
                 with st.spinner("🧠 Hunting for high-value volatility..."):
                     client = Groq(api_key=GROQ_API_KEY)
                     
+                    # STRICT PROMPT TO FORCE VALID MARKETS
                     prompt = f"""
                     You are a ruthless sports betting analyst. Hunt for high-value traps and explosive odds.
+                    
                     Raw text: {raw_ocr_text}
+                    
+                    CRITICAL RULES:
+                    1. The "pick" MUST be a specific betting market (e.g., 'Over 2.5 Goals', 'Draw (High Value)', 'Asian Handicap -1.5', 'Both Teams to Score', 'Next Goal - Team 2').
+                    2. DO NOT put a team name in the "pick" column. If you cannot determine a specific market, write 'No Value'.
+                    3. The "confidence" MUST be an integer between 1 and 100 (e.g., 85, not 0.85).
+                    
                     Return a JSON array with keys: "time", "league", "team1", "team2", "odds_1", "odds_x", "odds_2", "pick", "confidence".
                     Return ONLY valid JSON.
                     """
@@ -85,13 +93,17 @@ with tab1:
                             today_date = datetime.now().strftime("%Y-%m-%d")
                             
                             for pick in best_picks:
-                                conf = int(pick.get('confidence', 0))
+                                # Ensure confidence is an integer
+                                try:
+                                    conf = int(float(pick.get('confidence', 0)))
+                                except:
+                                    conf = 0
+
                                 risk = "LOW" if conf >= 75 else "MED" if conf >= 50 else "HIGH"
                                 
                                 with st.expander(f"⚽ {pick.get('team1')} vs {pick.get('team2')} - {risk} RISK"):
-                                    st.write(f"**Pick:** {pick.get('pick')} | **Confidence:** {pick.get('confidence')}%")
+                                    st.write(f"**Pick:** {pick.get('pick')} | **Confidence:** {conf}%")
                                     
-                                    # --- THE FIX: FORCING STRINGS TO PREVENT SCRAMBLED DATA ---
                                     payload = {
                                         "date": str(today_date),
                                         "time": str(pick.get('time', '')),
@@ -102,7 +114,7 @@ with tab1:
                                         "m1": str(pick.get('odds_x', '')),
                                         "m2": str(pick.get('odds_2', '')),
                                         "Pick": str(pick.get('pick', '')),
-                                        "Confidence": str(pick.get('confidence', ''))
+                                        "Confidence": str(conf)
                                     }
                                     requests.post(GOOGLE_SHEET_URL, json=payload)
                         else:
@@ -127,11 +139,14 @@ with tab2:
                 if 'Profit' not in df.columns:
                     df['Profit'] = 0.0
 
+                # Clean data for calculations
+                df['Profit'] = pd.to_numeric(df['Profit'], errors='coerce').fillna(0)
+
                 total_bets = len(df)
                 settled_bets = len(df[df['Result'].isin(['Win', 'Loss'])])
                 wins = len(df[df['Result'] == 'Win'])
                 win_rate = (wins / settled_bets * 100) if settled_bets > 0 else 0
-                total_profit = pd.to_numeric(df['Profit'], errors='coerce').sum()
+                total_profit = df['Profit'].sum()
                 
                 col1, col2, col3, col4 = st.columns(4)
                 col1.metric("Total Scans", total_bets)
@@ -158,7 +173,10 @@ with tab2:
                             
                             if btn_col1.button("✅ Win", key=f"win_{index}"):
                                 row_num = index + 2
-                                profit = float(row['Odds']) - 1.0
+                                try:
+                                    profit = float(row['Odds']) - 1.0
+                                except:
+                                    profit = 0.0
                                 sheet.update_cell(row_num, 11, "Win")
                                 sheet.update_cell(row_num, 12, profit)
                                 st.rerun()
