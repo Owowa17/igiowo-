@@ -62,21 +62,21 @@ with tab1:
                 with st.spinner("🧠 Hunting for high-value volatility..."):
                     client = Groq(api_key=GROQ_API_KEY)
                     
-                    # ULTRA-STRICT PROMPT WITH SMART MODEL
-                    prompt = f"""
-                    You are a ruthless sports betting analyst. Hunt for high-value traps and explosive odds.
-                    
-                    Raw text: {raw_ocr_text}
-                    
-                    CRITICAL RULES:
-                    1. The "pick" MUST be a specific betting market (e.g., 'Over 2.5 Goals', 'Draw (High Value)', 'Asian Handicap -1.5', 'Both Teams to Score', 'Next Goal - Team 2').
-                    2. DO NOT put a team name in the "pick" column. If you cannot determine a specific market, write 'No Value'.
-                    3. The "odds_1", "odds_x", and "odds_2" MUST be the actual decimal odds from the screen (e.g., 1.65, 3.40, 5.20). NEVER put the confidence score in the odds column.
-                    4. The "confidence" MUST be an integer between 1 and 100 (e.g., 85, not 0.85).
-                    
-                    Return a JSON array with keys: "time", "league", "team1", "team2", "odds_1", "odds_x", "odds_2", "pick", "confidence".
-                    Return ONLY valid JSON.
-                    """
+                      # ULTRA-STRICT PROMPT WITH SMART MODEL
+prompt = f"""
+You are a ruthless sports betting analyst. 
+Raw text: {raw_ocr_text}
+
+YOUR TASK: Find the single most likely outcome for each match based on the 1X2 odds provided. 
+
+RULES:
+1. You MUST pick a specific market: 'Home Win', 'Away Win', 'Draw', 'Over 2.5 Goals', or 'Both Teams to Score'.
+2. Do NOT output 'No Value'. You must make a prediction.
+3. Confidence: Look at the lowest odds. If a team is 1.40 or lower, confidence should be 80%+. If the odds are tight (e.g., 2.10, 3.20, 2.80), confidence should be 45-55%.
+
+Return a JSON array with keys: "time", "league", "team1", "team2", "odds_1", "odds_x", "odds_2", "pick", "confidence".
+Return ONLY valid JSON.
+"""
                     
                     try:
                         response = client.chat.completions.create(
