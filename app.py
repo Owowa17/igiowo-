@@ -62,7 +62,7 @@ with tab1:
                 with st.spinner("🧠 Hunting for high-value volatility..."):
                     client = Groq(api_key=GROQ_API_KEY)
                     
-                    # STRICT PROMPT TO FORCE VALID MARKETS
+                    # ULTRA-STRICT PROMPT
                     prompt = f"""
                     You are a ruthless sports betting analyst. Hunt for high-value traps and explosive odds.
                     
@@ -71,7 +71,8 @@ with tab1:
                     CRITICAL RULES:
                     1. The "pick" MUST be a specific betting market (e.g., 'Over 2.5 Goals', 'Draw (High Value)', 'Asian Handicap -1.5', 'Both Teams to Score', 'Next Goal - Team 2').
                     2. DO NOT put a team name in the "pick" column. If you cannot determine a specific market, write 'No Value'.
-                    3. The "confidence" MUST be an integer between 1 and 100 (e.g., 85, not 0.85).
+                    3. The "odds_1", "odds_x", and "odds_2" MUST be the actual decimal odds from the screen (e.g., 1.65, 3.40, 5.20). NEVER put the confidence score in the odds column.
+                    4. The "confidence" MUST be an integer between 1 and 100 (e.g., 85, not 0.85).
                     
                     Return a JSON array with keys: "time", "league", "team1", "team2", "odds_1", "odds_x", "odds_2", "pick", "confidence".
                     Return ONLY valid JSON.
@@ -81,7 +82,7 @@ with tab1:
                         response = client.chat.completions.create(
                             model="openai/gpt-oss-120b",
                             messages=[{"role": "user", "content": prompt}],
-                            temperature=0.2,
+                            temperature=0.1,
                         )
                         content = response.choices[0].message.content
                         match = re.search(r'\[.*\]', content, re.DOTALL)
@@ -93,7 +94,7 @@ with tab1:
                             today_date = datetime.now().strftime("%Y-%m-%d")
                             
                             for pick in best_picks:
-                                # Ensure confidence is an integer
+                                # Force confidence to be an integer
                                 try:
                                     conf = int(float(pick.get('confidence', 0)))
                                 except:
@@ -103,6 +104,7 @@ with tab1:
                                 
                                 with st.expander(f"⚽ {pick.get('team1')} vs {pick.get('team2')} - {risk} RISK"):
                                     st.write(f"**Pick:** {pick.get('pick')} | **Confidence:** {conf}%")
+                                    st.write(f"**Odds:** {pick.get('odds_1')} / {pick.get('odds_x')} / {pick.get('odds_2')}")
                                     
                                     payload = {
                                         "date": str(today_date),
