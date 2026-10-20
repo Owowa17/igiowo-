@@ -91,22 +91,22 @@ with tab1:
                                 with st.expander(f"⚽ {pick.get('team1')} vs {pick.get('team2')} - {risk} RISK"):
                                     st.write(f"**Pick:** {pick.get('pick')} | **Confidence:** {pick.get('confidence')}%")
                                     
-                                    # Send to Google Sheets
-  payload = {
-    "date": str(today_date),
-    "time": str(pick.get('time', '')),
-    "league": str(pick.get('league', '')),
-    "team1": str(pick.get('team1', '')),
-    "team2": str(pick.get('team2', '')),
-    "odds": str(pick.get('odds_1', '')),
-    "m1": str(pick.get('odds_x', '')),
-    "m2": str(pick.get('odds_2', '')),
-    "Pick": str(pick.get('pick', '')),
-    "Confidence": str(pick.get('confidence', ''))
-}
-                        requests.post(GOOGLE_SHEET_URL, json=payload)
+                                    # --- THE FIX: FORCING STRINGS TO PREVENT SCRAMBLED DATA ---
+                                    payload = {
+                                        "date": str(today_date),
+                                        "time": str(pick.get('time', '')),
+                                        "league": str(pick.get('league', '')),
+                                        "team1": str(pick.get('team1', '')),
+                                        "team2": str(pick.get('team2', '')),
+                                        "odds": str(pick.get('odds_1', '')),
+                                        "m1": str(pick.get('odds_x', '')),
+                                        "m2": str(pick.get('odds_2', '')),
+                                        "Pick": str(pick.get('pick', '')),
+                                        "Confidence": str(pick.get('confidence', ''))
+                                    }
+                                    requests.post(GOOGLE_SHEET_URL, json=payload)
                         else:
-                        st.error("❌ AI did not return JSON.")
+                            st.error("❌ AI did not return JSON.")
                     except Exception as e:
                         st.error(f"❌ AI Error: {e}")
 
@@ -118,23 +118,20 @@ with tab2:
     
     if sheet:
         try:
-            # Fetch data and convert to DataFrame
             data = sheet.get_all_records()
             if data:
                 df = pd.DataFrame(data)
                 
-                # Ensure Result and Profit columns exist
                 if 'Result' not in df.columns:
                     df['Result'] = ''
                 if 'Profit' not in df.columns:
                     df['Profit'] = 0.0
 
-                # --- PERFORMANCE METRICS ---
                 total_bets = len(df)
                 settled_bets = len(df[df['Result'].isin(['Win', 'Loss'])])
                 wins = len(df[df['Result'] == 'Win'])
                 win_rate = (wins / settled_bets * 100) if settled_bets > 0 else 0
-                total_profit = df['Profit'].sum()
+                total_profit = pd.to_numeric(df['Profit'], errors='coerce').sum()
                 
                 col1, col2, col3, col4 = st.columns(4)
                 col1.metric("Total Scans", total_bets)
@@ -143,11 +140,8 @@ with tab2:
                 col4.metric("Total Profit (Units)", f"{total_profit:.2f}")
 
                 st.write("---")
-                
-                # --- SETTLE MATCHES ---
                 st.subheader("⚖️ Settle Pending Matches")
                 
-                # Find rows where Result is empty
                 pending = df[df['Result'] == '']
                 
                 if pending.empty:
@@ -160,21 +154,19 @@ with tab2:
                             cols[1].write(f"Pick: {row['Pick']}")
                             cols[2].write(f"Odds: {row['Odds']}")
                             
-                            # Buttons for Win/Loss
                             btn_col1, btn_col2 = cols[3].columns(2)
                             
                             if btn_col1.button("✅ Win", key=f"win_{index}"):
-                                # Update Sheet
-                                row_num = index + 2 # +2 because of 0-index and header row
+                                row_num = index + 2
                                 profit = float(row['Odds']) - 1.0
-                                sheet.update_cell(row_num, 11, "Win") # Column K
-                                sheet.update_cell(row_num, 12, profit) # Column L
+                                sheet.update_cell(row_num, 11, "Win")
+                                sheet.update_cell(row_num, 12, profit)
                                 st.rerun()
                                 
                             if btn_col2.button("❌ Loss", key=f"loss_{index}"):
                                 row_num = index + 2
                                 sheet.update_cell(row_num, 11, "Loss")
-                                sheet.update_cell(row_num, 12, -1.0) # Assumes 1 unit stake
+                                sheet.update_cell(row_num, 12, -1.0)
                                 st.rerun()
                                 
                 st.write("---")
