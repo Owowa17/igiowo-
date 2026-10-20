@@ -160,65 +160,77 @@ with tab1:
                     st.error(f"Error: {e}")
 
             # MODE B: AUDIT BOOKING
-            elif "Audit My Booking" in app_mode:
-                slip_prompt = f"Extract selections from this booking text: {raw_text}. Return JSON array with keys: 'match', 'user_pick'. ONLY JSON."
-                try:
-                    res = client.chat.completions.create(model="openai/gpt-oss-120b", messages=[{"role": "user", "content": slip_prompt}], temperature=0.1)
-                    match = re.search(r'\[.*\]', res.choices[0].message.content, re.DOTALL)
+elif "Audit My Booking" in app_mode:
+    slip_prompt = f"""
+    Extract the football selections from this text: {raw_text}
+    
+    CRITICAL RULE: If the text does not contain actual football team names (like 'Arsenal', 'Chelsea', 'Real Madrid') and a specific bet type, return an empty array: []
+    Do NOT guess. Do NOT analyze booking codes. Only extract actual matches.
+    
+    Return a JSON array with keys: "match", "user_pick".
+    Return ONLY JSON.
+    """
+    try:
+        res = client.chat.completions.create(model="openai/gpt-oss-120b", messages=[{"role": "user", "content": slip_prompt}], temperature=0.1)
+        match = re.search(r'\[.*\]', res.choices[0].message.content, re.DOTALL)
+        
+        if match:
+            slips = json.loads(match.group(0))
+            
+            # If the AI returns an empty array, it means it didn't find any matches
+            if len(slips) == 0:
+                st.error("❌ Invalid Image or Booking Code. Please load the code in your SportyBet app and screenshot the ACTUAL MATCHES, not just the code.")
+            else:
+                st.success(f"✅ Found {len(slips)} legs. Auditing...")
+                
+                today_date = datetime.now().strftime("%Y-%m-%d")
+                total_confidence = 0
+                
+                for s in slips:
+                    match_str = s.get('match', '')
+                    t1, t2 = (match_str.split(' vs ')[0], match_str.split(' vs ')[1]) if ' vs ' in match_str else (match_str, "")
                     
-                    if match:
-                        slips = json.loads(match.group(0))
-                        st.success(f"✅ Found {len(slips)} legs. Auditing...")
+                    st1 = fetch_team_stats(t1, API_FOOTBALL_KEY)
+                    st2 = fetch_team_stats(t2, API_FOOTBALL_KEY) if t2 else None
+                    time.sleep(0.5)
+                    
+                    ctx = ""
+                    if st1: ctx += f"{t1}: Scored {st1['avg_scored']}/game. "
+                    if st2: ctx += f"{t2}: Scored {st2['avg_scored']}/game. "
+                    
+                    audit_prompt = f"""
+                    Review this user's bet: {s.get('user_pick')} for {match_str}.
+                    Stats: {ctx}
+                    Is this a safe bet, risky, or a trap? Give confidence (1-100).
+                    Return JSON: "verdict" (Safe/Risky/Trap), "confidence", "reason".
+                    """
+                    
+                    a_res = client.chat.completions.create(model="openai/gpt-oss-120b", messages=[{"role": "user", "content": audit_prompt}], temperature=0.1)
+                    a_data = json.loads(re.search(r'\{.*\}', a_res.choices[0].message.content, re.DOTALL).group(0))
+                    
+                    conf = int(float(a_data.get('confidence', 0)))
+                    total_confidence += conf
+                    
+                    with st.expander(f"📝 {match_str} - Pick: {s.get('user_pick')}"):
+                        st.write(f"**Verdict:** {a_data.get('verdict')} | **Confidence:** {conf}%")
+                        st.write(f"**Reasoning:** {a_data.get('reason')}")
+                        st.info(f"📊 {ctx}")
                         
-                        today_date = datetime.now().strftime("%Y-%m-%d")
-                        total_confidence = 0
-                        
-                        for s in slips:
-                            match_str = s.get('match', '')
-                            t1, t2 = (match_str.split(' vs ')[0], match_str.split(' vs ')[1]) if ' vs ' in match_str else (match_str, "")
-                            
-                            st1 = fetch_team_stats(t1, API_FOOTBALL_KEY)
-                            st2 = fetch_team_stats(t2, API_FOOTBALL_KEY) if t2 else None
-                            time.sleep(0.5)
-                            
-                            ctx = ""
-                            if st1: ctx += f"{t1}: Scored {st1['avg_scored']}/game. "
-                            if st2: ctx += f"{t2}: Scored {st2['avg_scored']}/game. "
-                            
-                            audit_prompt = f"""
-                            Review this user's bet: {s.get('user_pick')} for {match_str}.
-                            Stats: {ctx}
-                            Is this a safe bet, risky, or a trap? Give confidence (1-100).
-                            Return JSON: "verdict" (Safe/Risky/Trap), "confidence", "reason".
-                            """
-                            
-                            a_res = client.chat.completions.create(model="openai/gpt-oss-120b", messages=[{"role": "user", "content": audit_prompt}], temperature=0.1)
-                            a_data = json.loads(re.search(r'\{.*\}', a_res.choices[0].message.content, re.DOTALL).group(0))
-                            
-                            conf = int(float(a_data.get('confidence', 0)))
-                            total_confidence += conf
-                            
-                            with st.expander(f"📝 {match_str} - Pick: {s.get('user_pick')}"):
-                                st.write(f"**Verdict:** {a_data.get('verdict')} | **Confidence:** {conf}%")
-                                st.write(f"**Reasoning:** {a_data.get('reason')}")
-                                st.info(f"📊 {ctx}")
-                                
-                            payload = {"date": today_date, "time": "SLIP", "league": "AUDIT", "team1": t1, "team2": t2, "odds": "", "m1": "", "m2": "", "Pick": s.get('user_pick'), "Confidence": str(conf)}
-                            requests.post(GOOGLE_SHEET_URL, json=payload)
-                        
-                        if slips:
-                            avg_conf = total_confidence / len(slips)
-                            st.write("---")
-                            st.subheader("⚖️ Overall Booking Verdict")
-                            if avg_conf >= 70:
-                                st.success(f"🌟 **APPROVE** (Avg: {avg_conf:.1f}%) - Solid slip.")
-                            elif avg_conf >= 50:
-                                st.warning(f"⚠️ **CAUTION** (Avg: {avg_conf:.1f}%) - Some legs are risky.")
-                            else:
-                                st.error(f"❌ **REJECT** (Avg: {avg_conf:.1f}%) - High trap potential.")
-                except Exception as e:
-                    st.error(f"Audit Error: {e}")
-
+                    payload = {"date": today_date, "time": "SLIP", "league": "AUDIT", "team1": t1, "team2": t2, "odds": "", "m1": "", "m2": "", "Pick": s.get('user_pick'), "Confidence": str(conf)}
+                    requests.post(GOOGLE_SHEET_URL, json=payload)
+                
+                if slips:
+                    avg_conf = total_confidence / len(slips)
+                    st.write("---")
+                    st.subheader("⚖️ Overall Booking Verdict")
+                    if avg_conf >= 70:
+                        st.success(f"🌟 **APPROVE** (Avg: {avg_conf:.1f}%) - Solid slip.")
+                    elif avg_conf >= 50:
+                        st.warning(f"⚠️ **CAUTION** (Avg: {avg_conf:.1f}%) - Some legs are risky.")
+                    else:
+                        st.error(f"❌ **REJECT** (Avg: {avg_conf:.1f}%) - High trap potential.")
+    except Exception as e:
+        st.error(f"Audit Error: {e}")
 # ==========================================
 # TAB 2: THE TRACKER & PERFORMANCE
 # ==========================================
