@@ -62,7 +62,7 @@ with tab1:
                 with st.spinner("🧠 Hunting for high-value volatility..."):
                     client = Groq(api_key=GROQ_API_KEY)
                     
-                    # ULTRA-STRICT PROMPT
+                    # ULTRA-STRICT PROMPT WITH SMART MODEL
                     prompt = f"""
                     You are a ruthless sports betting analyst. Hunt for high-value traps and explosive odds.
                     
@@ -80,7 +80,7 @@ with tab1:
                     
                     try:
                         response = client.chat.completions.create(
-                            model="openai/gpt-oss-120b",
+                            model="llama-3.3-70b-versatile", # UPGRADED MODEL
                             messages=[{"role": "user", "content": prompt}],
                             temperature=0.1,
                         )
