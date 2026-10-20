@@ -92,15 +92,21 @@ with tab1:
                                     st.write(f"**Pick:** {pick.get('pick')} | **Confidence:** {pick.get('confidence')}%")
                                     
                                     # Send to Google Sheets
-                                    payload = {
-                                        "date": today_date, "time": pick.get('time', ''), "league": pick.get('league', ''),
-                                        "team1": pick.get('team1', ''), "team2": pick.get('team2', ''),
-                                        "odds": pick.get('odds_1', ''), "m1": pick.get('odds_x', ''), "m2": pick.get('odds_2', ''),
-                                        "Pick": pick.get('pick', ''), "Confidence": pick.get('confidence', '')
-                                    }
-                                    requests.post(GOOGLE_SHEET_URL, json=payload)
+  payload = {
+    "date": str(today_date),
+    "time": str(pick.get('time', '')),
+    "league": str(pick.get('league', '')),
+    "team1": str(pick.get('team1', '')),
+    "team2": str(pick.get('team2', '')),
+    "odds": str(pick.get('odds_1', '')),
+    "m1": str(pick.get('odds_x', '')),
+    "m2": str(pick.get('odds_2', '')),
+    "Pick": str(pick.get('pick', '')),
+    "Confidence": str(pick.get('confidence', ''))
+}
+                        requests.post(GOOGLE_SHEET_URL, json=payload)
                         else:
-                            st.error("❌ AI did not return JSON.")
+                        st.error("❌ AI did not return JSON.")
                     except Exception as e:
                         st.error(f"❌ AI Error: {e}")
 
