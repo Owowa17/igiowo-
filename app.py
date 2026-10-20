@@ -13,8 +13,8 @@ from groq import Groq
 from datetime import datetime
 
 # --- PAGE CONFIGURATION ---
-st.set_page_config(page_title="AI Booking Auditor", page_icon="🦈", layout="wide")
-st.title("🦈 AI Market Hunter & Booking Auditor")
+st.set_page_config(page_title="AI Sharp Bettor", page_icon="📈", layout="wide")
+st.title("📈 AI Sharp Bettor & Market Auditor")
 
 # --- CONFIGURATION ---
 GOOGLE_SHEET_URL = st.secrets["GOOGLE_SHEET_URL"]
@@ -74,12 +74,12 @@ tab1, tab2 = st.tabs(["📸 Scanner & Auditor", "📊 Tracker & Performance"])
 # ==========================================
 with tab1:
     st.subheader("1. Choose Input Method")
-    input_method = st.radio("How do you want to audit?", ["Upload Screenshot", "Paste Text / Booking Code"])
+    input_method = st.radio("How do you want to analyze?", ["Upload Screenshot", "Paste Text / Booking Code"])
     
     raw_text = ""
     
     if input_method == "Upload Screenshot":
-        uploaded_file = st.file_uploader("Upload a screenshot of the booking or match list", type=["png", "jpg", "jpeg"])
+        uploaded_file = st.file_uploader("Upload a screenshot", type=["png", "jpg", "jpeg"])
         if uploaded_file is not None:
             img = Image.open(uploaded_file)
             st.image(img, caption="Uploaded Screenshot", use_column_width=True)
@@ -90,23 +90,19 @@ with tab1:
                 result, _ = ocr(temp_path)
                 if result:
                     raw_text = "\n".join([line[1] for line in result])
-                else:
-                    st.warning("⚠️ No text found in image.")
-                    
     else:
-        st.info("💡 Tip: Load your booking code on SportyBet, copy the match text (e.g., 'Arsenal vs Chelsea - Over 2.5 Goals'), and paste it below.")
         raw_text = st.text_area("Paste your booking details here:", height=200)
 
     # --- PROCESSING LOGIC ---
     if raw_text:
         st.write("---")
-        app_mode = st.radio("What do you want the AI to do?", ["🎯 Find New Value", "🕵️ Audit My Booking"])
+        app_mode = st.radio("Select Strategy:", ["🎯 Find +EV Value", "🕵️ Audit My Booking"])
         
         if st.button("🚀 Run Analysis"):
             client = Groq(api_key=GROQ_API_KEY)
             
-            # MODE A: FIND VALUE
-            if "Find New Value" in app_mode:
+            # MODE A: FIND +EV VALUE (Guru Mode)
+            if "Find +EV Value" in app_mode:
                 extract_prompt = f"Extract matches from: {raw_text}. Return JSON array with: time, league, team1, team2, odds_1, odds_x, odds_2. ONLY JSON."
                 try:
                     res = client.chat.completions.create(model="openai/gpt-oss-120b", messages=[{"role": "user", "content": extract_prompt}], temperature=0.1)
@@ -114,7 +110,7 @@ with tab1:
                     
                     if match:
                         matches = json.loads(match.group(0))
-                        st.success(f"✅ Found {len(matches)} matches. Fetching stats...")
+                        st.success(f"✅ Found {len(matches)} matches. Calculating True Value...")
                         today_date = datetime.now().strftime("%Y-%m-%d")
                         
                         for m in matches:
@@ -124,14 +120,38 @@ with tab1:
                             time.sleep(0.5)
                             
                             ctx = ""
-                            if s1: ctx += f"{t1}: Scored {s1['avg_scored']}, Conceded {s1['avg_conceded']}/game. "
-                            if s2: ctx += f"{t2}: Scored {s2['avg_scored']}, Conceded {s2['avg_conceded']}/game. "
+                            if s1: ctx += f"{t1}: Scored {s1['avg_scored']}, Conceded {s1['avg_conceded']}. "
+                            if s2: ctx += f"{t2}: Scored {s2['avg_scored']}, Conceded {s2['avg_conceded']}. "
                             
-                            pred_prompt = f"Match: {t1} vs {t2}. Odds: {m.get('odds_1')}/{m.get('odds_x')}/{m.get('odds_2')}. Context: {ctx}. Pick best market. Return JSON: 'pick', 'confidence'."
-                            p_res = client.chat.completions.create(model="openai/gpt-oss-120b", messages=[{"role": "user", "content": pred_prompt}], temperature=0.1)
+                            # CALCULATE IMPLIED PROBABILITY
+                            try:
+                                o1 = float(m.get('odds_1', 0))
+                                ox = float(m.get('odds_x', 0))
+                                o2 = float(m.get('odds_2', 0))
+                                imp_prob_1 = round((1/o1)*100, 1) if o1 > 0 else 0
+                                imp_prob_2 = round((1/o2)*100, 1) if o2 > 0 else 0
+                            except:
+                                imp_prob_1, imp_prob_2 = 0, 0
+
+                            # THE GURU PROMPT
+                            pred_prompt = f"""
+                            You are a ruthless sharp bettor. The public bets with emotion; you bet with math. 
+                            Match: {t1} vs {t2}. 
+                            Odds: Home {m.get('odds_1')} (Implied Prob: {imp_prob_1}%), Draw {m.get('odds_x')}, Away {m.get('odds_2')} (Implied Prob: {imp_prob_2}%).
+                            Stats Context: {ctx}
+                            
+                            Rules:
+                            1. The 1X2 market is highly efficient. ONLY pick 'Home Win' or 'Away Win' if the True Probability (based on stats) is at least 10% higher than the Implied Probability.
+                            2. Focus on 'Weak Markets': Pick 'Over 2.5 Goals' or 'Both Teams to Score (BTTS)' if the stats show both teams have leaky defenses. 
+                            3. If the odds look like a trap (e.g., a heavy favorite with terrible recent stats), write 'TRAP - AVOID'.
+                            
+                            Return JSON with keys: "pick", "confidence" (1-100), "edge_reason" (why the bookie is wrong).
+                            """
+                            p_res = client.chat.completions.create(model="openai/gpt-oss-120b", messages=[{"role": "user", "content": pred_prompt}], temperature=0.2)
                             p_data = json.loads(re.search(r'\{.*\}', p_res.choices[0].message.content, re.DOTALL).group(0))
                             
                             with st.expander(f"⚽ {t1} vs {t2} - {p_data.get('pick')} ({p_data.get('confidence')}%)"):
+                                st.write(f"**Edge:** {p_data.get('edge_reason')}")
                                 st.info(f"📊 {ctx}")
                                 
                             payload = {"date": today_date, "time": m.get('time', ''), "league": m.get('league', ''), "team1": t1, "team2": t2, "odds": m.get('odds_1', ''), "m1": m.get('odds_x', ''), "m2": m.get('odds_2', ''), "Pick": p_data.get('pick'), "Confidence": str(p_data.get('confidence'))}
@@ -141,31 +161,21 @@ with tab1:
 
             # MODE B: AUDIT BOOKING
             elif "Audit My Booking" in app_mode:
-                slip_prompt = f"""
-                Extract the selections from this booking text: {raw_text}
-                Return a JSON array with keys: "match", "user_pick".
-                Return ONLY JSON.
-                """
+                slip_prompt = f"Extract selections from this booking text: {raw_text}. Return JSON array with keys: 'match', 'user_pick'. ONLY JSON."
                 try:
                     res = client.chat.completions.create(model="openai/gpt-oss-120b", messages=[{"role": "user", "content": slip_prompt}], temperature=0.1)
                     match = re.search(r'\[.*\]', res.choices[0].message.content, re.DOTALL)
                     
                     if match:
                         slips = json.loads(match.group(0))
-                        st.success(f"✅ Found {len(slips)} legs on your booking. Auditing...")
+                        st.success(f"✅ Found {len(slips)} legs. Auditing...")
                         
                         today_date = datetime.now().strftime("%Y-%m-%d")
                         total_confidence = 0
                         
                         for s in slips:
                             match_str = s.get('match', '')
-                            # Split into Team 1 and Team 2
-                            if ' vs ' in match_str:
-                                t1, t2 = match_str.split(' vs ')[0], match_str.split(' vs ')[1]
-                            elif ' v ' in match_str:
-                                t1, t2 = match_str.split(' v ')[0], match_str.split(' v ')[1]
-                            else:
-                                t1, t2 = match_str, ""
+                            t1, t2 = (match_str.split(' vs ')[0], match_str.split(' vs ')[1]) if ' vs ' in match_str else (match_str, "")
                             
                             st1 = fetch_team_stats(t1, API_FOOTBALL_KEY)
                             st2 = fetch_team_stats(t2, API_FOOTBALL_KEY) if t2 else None
@@ -177,9 +187,9 @@ with tab1:
                             
                             audit_prompt = f"""
                             Review this user's bet: {s.get('user_pick')} for {match_str}.
-                            Stats Context: {ctx}
-                            Is this a safe bet, risky, or a trap? Give a confidence score (1-100).
-                            Return JSON with keys: "verdict" (Safe/Risky/Trap), "confidence", "reason".
+                            Stats: {ctx}
+                            Is this a safe bet, risky, or a trap? Give confidence (1-100).
+                            Return JSON: "verdict" (Safe/Risky/Trap), "confidence", "reason".
                             """
                             
                             a_res = client.chat.completions.create(model="openai/gpt-oss-120b", messages=[{"role": "user", "content": audit_prompt}], temperature=0.1)
@@ -188,26 +198,24 @@ with tab1:
                             conf = int(float(a_data.get('confidence', 0)))
                             total_confidence += conf
                             
-                            with st.expander(f"📝 {match_str} - Your Pick: {s.get('user_pick')}"):
-                                st.write(f"**AI Verdict:** {a_data.get('verdict')} | **Confidence:** {conf}%")
+                            with st.expander(f"📝 {match_str} - Pick: {s.get('user_pick')}"):
+                                st.write(f"**Verdict:** {a_data.get('verdict')} | **Confidence:** {conf}%")
                                 st.write(f"**Reasoning:** {a_data.get('reason')}")
                                 st.info(f"📊 {ctx}")
                                 
-                            # Save audit to sheet
                             payload = {"date": today_date, "time": "SLIP", "league": "AUDIT", "team1": t1, "team2": t2, "odds": "", "m1": "", "m2": "", "Pick": s.get('user_pick'), "Confidence": str(conf)}
                             requests.post(GOOGLE_SHEET_URL, json=payload)
                         
-                        # OVERALL DECISION
                         if slips:
                             avg_conf = total_confidence / len(slips)
                             st.write("---")
                             st.subheader("⚖️ Overall Booking Verdict")
                             if avg_conf >= 70:
-                                st.success(f"🌟 **APPROVE BOOKING** (Avg Confidence: {avg_conf:.1f}%) - This is a solid slip!")
+                                st.success(f"🌟 **APPROVE** (Avg: {avg_conf:.1f}%) - Solid slip.")
                             elif avg_conf >= 50:
-                                st.warning(f"⚠️ **PROCEED WITH CAUTION** (Avg Confidence: {avg_conf:.1f}%) - Some legs are risky.")
+                                st.warning(f"⚠️ **CAUTION** (Avg: {avg_conf:.1f}%) - Some legs are risky.")
                             else:
-                                st.error(f"❌ **REJECT BOOKING** (Avg Confidence: {avg_conf:.1f}%) - High trap potential.")
+                                st.error(f"❌ **REJECT** (Avg: {avg_conf:.1f}%) - High trap potential.")
                 except Exception as e:
                     st.error(f"Audit Error: {e}")
 
