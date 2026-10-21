@@ -29,7 +29,10 @@ except KeyError:
 @st.cache_resource
 def get_sheet_connection():
     try:
-        creds_dict = dict(st.secrets["gcp_service_account"])
+        # Parse the JSON string from secrets
+        creds_json = st.secrets["gcp_service_account"]
+        creds_dict = json.loads(creds_json)
+        
         scopes = ["https://www.googleapis.com/auth/spreadsheets", "https://www.googleapis.com/auth/drive"]
         creds = Credentials.from_service_account_info(creds_dict, scopes=scopes)
         client = gspread.authorize(creds)
@@ -147,14 +150,13 @@ with tab1:
                             t1, t2 = m.get('team1', ''), m.get('team2', '')
                             s1 = fetch_team_stats(t1, API_FOOTBALL_KEY)
                             s2 = fetch_team_stats(t2, API_FOOTBALL_KEY)
-                            time.sleep(0.5) # API Cooldown
+                            time.sleep(0.5) 
                             
                             ctx = ""
                             if s1: ctx += f"{t1}: Scored {s1['avg_scored']}, Conceded {s1['avg_conceded']}. "
                             if s2: ctx += f"{t2}: Scored {s2['avg_scored']}, Conceded {s2['avg_conceded']}. "
                             if not ctx: ctx = "No recent stats available."
                             
-                            # CALCULATE IMPLIED PROBABILITY
                             try:
                                 o1, ox, o2 = float(m.get('odds_1', 0)), float(m.get('odds_x', 0)), float(m.get('odds_2', 0))
                                 imp_prob_1 = round((1/o1)*100, 1) if o1 > 0 else 0
@@ -170,21 +172,25 @@ with tab1:
                             
                             Rules:
                             1. The 1X2 market is efficient. ONLY pick 'Home Win' or 'Away Win' if the True Probability (based on stats) is at least 10% higher than the Implied Probability.
-                            2. Focus on 'Weak Markets': Pick 'Over 2.5 Goals' or 'Both Teams to Score (BTTS)' if the stats show leaky defenses.
-                            3. If the odds look like a trap (e.g., heavy favorite with bad stats), write 'TRAP - AVOID'.
+                            2. Focus on 'Weak Markets': Pick 'Over 1.5 Goals', 'Over 2.5 Goals' or 'Both Teams to Score (BTTS)' if the stats show leaky defenses.
+                            3. If the odds are extremely low (below 1.30), write 'TRAP - AVOID'. These offer no value.
+                            4. If you cannot find a valuable pick, write 'No Value'.
                             
-                            Return JSON with keys: "pick", "confidence" (1-100), "edge_reason" (why the bookie is wrong).
+                            Return JSON with keys: "pick", "confidence" (1-100), "edge_reason".
                             """
                             p_res = client.chat.completions.create(model="openai/gpt-oss-120b", messages=[{"role": "user", "content": pred_prompt}], temperature=0.2)
                             p_data = extract_json(p_res.choices[0].message.content, is_array=False)
                             
-                            # Fallback if AI fails
                             pick_val = p_data.get('pick', 'No Value')
                             conf_val = int(float(p_data.get('confidence', 0)))
                             
-                            risk_label = "LOW" if conf_val >= 75 else "MED" if conf_val >= 50 else "HIGH"
+                            # FIXED LOGIC: If it's a trap, force it to HIGH RISK
+                            if "TRAP" in pick_val.upper():
+                                risk_label = "HIGH RISK / TRAP"
+                            else:
+                                risk_label = "LOW" if conf_val >= 75 else "MED" if conf_val >= 50 else "HIGH"
                             
-                            with st.expander(f"⚽ {t1} vs {t2} - {pick_val} ({conf_val}%) - {risk_label} RISK"):
+                            with st.expander(f"⚽ {t1} vs {t2} - {pick_val} ({conf_val}%) - {risk_label}"):
                                 st.write(f"**Edge:** {p_data.get('edge_reason', 'N/A')}")
                                 st.info(f"📊 {ctx}")
                                 
@@ -196,13 +202,16 @@ with tab1:
             # MODE B: AUDIT BOOKING
             elif "Audit My Booking" in app_mode:
                 slip_prompt = f"""
-                Extract football selections from this text: {raw_text}
+                Extract the football selections from this text: {raw_text}
                 
-                CRITICAL RULE: If the text does not contain actual football team names (like 'Arsenal', 'Chelsea') and a specific bet type, return an empty array: []
-                Do NOT guess. Do NOT analyze booking codes alone.
+                CRITICAL RULE: SportyBet lists the market (e.g., 'Over 2.5', 'Over 1.5', 'Home', 'Away') ABOVE or BEFORE the team names. 
+                You MUST capture the actual market the user selected. Do NOT default to 'Home' unless the text explicitly says 'Home'.
                 
                 Return a JSON array with keys: "match", "user_pick".
-                Return ONLY JSON.
+                Example 1: If text says "Over 2.5\nAston Villa vs Man City", return {{"match": "Aston Villa vs Man City", "user_pick": "Over 2.5"}}.
+                Example 2: If text says "Home\nArsenal vs Everton", return {{"match": "Arsenal vs Everton", "user_pick": "Home"}}.
+                
+                Return ONLY valid JSON. Do not include markdown or conversational text.
                 """
                 try:
                     res = client.chat.completions.create(model="openai/gpt-oss-120b", messages=[{"role": "user", "content": slip_prompt}], temperature=0.1)
