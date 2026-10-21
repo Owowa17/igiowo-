@@ -3,10 +3,8 @@ import io
 import json
 import re
 import requests
-import gspread
 import pandas as pd
 import time
-from google.oauth2.service_account import Credentials
 from PIL import Image
 from rapidocr_onnxruntime import RapidOCR
 from groq import Groq
@@ -24,24 +22,6 @@ try:
 except KeyError:
     st.error("⚠️ Missing Secrets! Please check your Streamlit Secrets configuration.")
     st.stop()
-
-# --- GOOGLE SHEETS CONNECTION ---
-@st.cache_resource
-def get_sheet_connection():
-    try:
-        # Parse the JSON string from secrets
-        creds_json = st.secrets["gcp_service_account"]
-        creds_dict = json.loads(creds_json)
-        
-        scopes = ["https://www.googleapis.com/auth/spreadsheets", "https://www.googleapis.com/auth/drive"]
-        creds = Credentials.from_service_account_info(creds_dict, scopes=scopes)
-        client = gspread.authorize(creds)
-        return client.open_by_url(GOOGLE_SHEET_URL).sheet1
-    except Exception as e:
-        st.error(f"❌ Failed to connect to Google Sheets: {e}")
-        return None
-
-sheet = get_sheet_connection()
 
 # --- HELPER: SAFELY EXTRACT JSON FROM AI TEXT ---
 def extract_json(text, is_array=True):
@@ -62,15 +42,13 @@ def fetch_team_stats(team_name, api_key):
         search_url = f"https://v3.football.api-sports.io/teams?search={team_name}"
         search_res = requests.get(search_url, headers=headers, timeout=10).json()
         
-        if not search_res.get('response'): 
-            return None
+        if not search_res.get('response'): return None
         
         team_id = search_res['response'][0]['team']['id']
         fixtures_url = f"https://v3.football.api-sports.io/fixtures?team={team_id}&last=5"
         fixtures_res = requests.get(fixtures_url, headers=headers, timeout=10).json()
         
-        if not fixtures_res.get('response'): 
-            return None
+        if not fixtures_res.get('response'): return None
             
         goals_scored, goals_conceded = 0, 0
         matches_played = len(fixtures_res['response'])
@@ -119,7 +97,7 @@ with tab1:
                     if result:
                         raw_text = "\n".join([line[1] for line in result])
                     else:
-                        st.warning("⚠️ No text found in image. Please try a clearer screenshot.")
+                        st.warning("⚠️ No text found in image.")
                 except Exception as e:
                     st.error(f"OCR Error: {e}")
     else:
@@ -141,7 +119,7 @@ with tab1:
                     matches = extract_json(res.choices[0].message.content, is_array=True)
                     
                     if not matches:
-                        st.error("❌ Could not find any valid matches in the image. Please ensure the team names and odds are clearly visible.")
+                        st.error("❌ Could not find any valid matches.")
                     else:
                         st.success(f"✅ Found {len(matches)} matches. Calculating True Value...")
                         today_date = datetime.now().strftime("%Y-%m-%d")
@@ -171,10 +149,9 @@ with tab1:
                             Stats Context: {ctx}
                             
                             Rules:
-                            1. The 1X2 market is efficient. ONLY pick 'Home Win' or 'Away Win' if the True Probability (based on stats) is at least 10% higher than the Implied Probability.
-                            2. Focus on 'Weak Markets': Pick 'Over 1.5 Goals', 'Over 2.5 Goals' or 'Both Teams to Score (BTTS)' if the stats show leaky defenses.
-                            3. If the odds are extremely low (below 1.30), write 'TRAP - AVOID'. These offer no value.
-                            4. If you cannot find a valuable pick, write 'No Value'.
+                            1. ONLY pick 'Home Win' or 'Away Win' if True Probability is at least 10% higher than Implied Probability.
+                            2. Focus on 'Weak Markets': Pick 'Over 1.5 Goals', 'Over 2.5 Goals' or 'Both Teams to Score (BTTS)'.
+                            3. If odds are extremely low (below 1.30), write 'TRAP - AVOID'.
                             
                             Return JSON with keys: "pick", "confidence" (1-100), "edge_reason".
                             """
@@ -183,12 +160,7 @@ with tab1:
                             
                             pick_val = p_data.get('pick', 'No Value')
                             conf_val = int(float(p_data.get('confidence', 0)))
-                            
-                            # FIXED LOGIC: If it's a trap, force it to HIGH RISK
-                            if "TRAP" in pick_val.upper():
-                                risk_label = "HIGH RISK / TRAP"
-                            else:
-                                risk_label = "LOW" if conf_val >= 75 else "MED" if conf_val >= 50 else "HIGH"
+                            risk_label = "HIGH RISK / TRAP" if "TRAP" in pick_val.upper() else ("LOW" if conf_val >= 75 else "MED" if conf_val >= 50 else "HIGH")
                             
                             with st.expander(f"⚽ {t1} vs {t2} - {pick_val} ({conf_val}%) - {risk_label}"):
                                 st.write(f"**Edge:** {p_data.get('edge_reason', 'N/A')}")
@@ -203,25 +175,18 @@ with tab1:
             elif "Audit My Booking" in app_mode:
                 slip_prompt = f"""
                 Extract the football selections from this text: {raw_text}
-                
-                CRITICAL RULE: SportyBet lists the market (e.g., 'Over 2.5', 'Over 1.5', 'Home', 'Away') ABOVE or BEFORE the team names. 
-                You MUST capture the actual market the user selected. Do NOT default to 'Home' unless the text explicitly says 'Home'.
-                
+                CRITICAL RULE: SportyBet lists the market ABOVE the team names. Do NOT default to 'Home'.
                 Return a JSON array with keys: "match", "user_pick".
-                Example 1: If text says "Over 2.5\nAston Villa vs Man City", return {{"match": "Aston Villa vs Man City", "user_pick": "Over 2.5"}}.
-                Example 2: If text says "Home\nArsenal vs Everton", return {{"match": "Arsenal vs Everton", "user_pick": "Home"}}.
-                
-                Return ONLY valid JSON. Do not include markdown or conversational text.
+                Return ONLY valid JSON.
                 """
                 try:
                     res = client.chat.completions.create(model="openai/gpt-oss-120b", messages=[{"role": "user", "content": slip_prompt}], temperature=0.1)
                     slips = extract_json(res.choices[0].message.content, is_array=True)
                     
                     if len(slips) == 0:
-                        st.error("❌ Invalid Image or Booking Code. Please load the code in your SportyBet app and screenshot the ACTUAL MATCHES, not just the code.")
+                        st.error("❌ Invalid Image. Please load the code in SportyBet and screenshot the ACTUAL MATCHES.")
                     else:
                         st.success(f"✅ Found {len(slips)} legs. Auditing...")
-                        
                         today_date = datetime.now().strftime("%Y-%m-%d")
                         total_confidence = 0
                         
@@ -238,13 +203,7 @@ with tab1:
                             if st2: ctx += f"{t2}: Scored {st2['avg_scored']}/game. "
                             if not ctx: ctx = "No stats available."
                             
-                            audit_prompt = f"""
-                            Review this user's bet: {s.get('user_pick')} for {match_str}.
-                            Stats: {ctx}
-                            Is this a safe bet, risky, or a trap? Give confidence (1-100).
-                            Return JSON: "verdict" (Safe/Risky/Trap), "confidence", "reason".
-                            """
-                            
+                            audit_prompt = f"Review bet: {s.get('user_pick')} for {match_str}. Stats: {ctx}. Is this safe, risky, or trap? Return JSON: 'verdict', 'confidence', 'reason'."
                             a_res = client.chat.completions.create(model="openai/gpt-oss-120b", messages=[{"role": "user", "content": audit_prompt}], temperature=0.1)
                             a_data = extract_json(a_res.choices[0].message.content, is_array=False)
                             
@@ -263,12 +222,9 @@ with tab1:
                             avg_conf = total_confidence / len(slips)
                             st.write("---")
                             st.subheader("⚖️ Overall Booking Verdict")
-                            if avg_conf >= 70:
-                                st.success(f"🌟 **APPROVE** (Avg: {avg_conf:.1f}%) - Solid slip.")
-                            elif avg_conf >= 50:
-                                st.warning(f"⚠️ **CAUTION** (Avg: {avg_conf:.1f}%) - Some legs are risky.")
-                            else:
-                                st.error(f"❌ **REJECT** (Avg: {avg_conf:.1f}%) - High trap potential.")
+                            if avg_conf >= 70: st.success(f"🌟 **APPROVE** (Avg: {avg_conf:.1f}%)")
+                            elif avg_conf >= 50: st.warning(f"⚠️ **CAUTION** (Avg: {avg_conf:.1f}%)")
+                            else: st.error(f"❌ **REJECT** (Avg: {avg_conf:.1f}%) - High trap potential.")
                 except Exception as e:
                     st.error(f"Audit Error: {e}")
 
@@ -278,16 +234,21 @@ with tab1:
 with tab2:
     st.header("📊 Betting Tracker")
     
-    if sheet:
-        try:
-            data = sheet.get_all_records()
+    try:
+        # FETCH DATA VIA APPS SCRIPT (No gspread needed!)
+        response = requests.get(GOOGLE_SHEET_URL)
+        
+        if response.status_code == 200:
+            data = response.json()
             if data:
                 df = pd.DataFrame(data)
+                
+                # Clean and format DataFrame
                 if 'Result' not in df.columns: df['Result'] = ''
                 if 'Profit' not in df.columns: df['Profit'] = 0.0
-                
                 df['Profit'] = pd.to_numeric(df['Profit'], errors='coerce').fillna(0)
                 
+                # Performance Metrics
                 total_bets = len(df)
                 settled_bets = len(df[df['Result'].isin(['Win', 'Loss'])])
                 wins = len(df[df['Result'] == 'Win'])
@@ -318,16 +279,21 @@ with tab2:
                             if btn_col1.button("✅ Win", key=f"win_{index}"):
                                 try: profit = float(row['Odds']) - 1.0
                                 except: profit = 0.0
-                                sheet.update_cell(index + 2, 11, "Win")
-                                sheet.update_cell(index + 2, 12, profit)
+                                # Send update request to Apps Script
+                                requests.post(GOOGLE_SHEET_URL, json={"action": "update", "rowNum": str(index + 2), "result": "Win", "profit": profit})
                                 st.rerun()
                             if btn_col2.button("❌ Loss", key=f"loss_{index}"):
-                                sheet.update_cell(index + 2, 11, "Loss")
-                                sheet.update_cell(index + 2, 12, -1.0)
+                                # Send update request to Apps Script
+                                requests.post(GOOGLE_SHEET_URL, json={"action": "update", "rowNum": str(index + 2), "result": "Loss", "profit": -1.0})
                                 st.rerun()
                                 
                 st.write("---")
                 st.subheader("📜 Full History")
                 st.dataframe(df, use_container_width=True)
-        except Exception as e:
-            st.error(f"Error loading tracker: {e}")
+            else:
+                st.info("No data yet. Scan a screenshot to get started.")
+        else:
+            st.error(f"Failed to fetch data from Apps Script. Status: {response.status_code}")
+            
+    except Exception as e:
+        st.error(f"Error loading tracker: {e}")
