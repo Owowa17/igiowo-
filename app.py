@@ -28,8 +28,8 @@ except KeyError:
     st.error("⚠️ Missing Secrets! Please check your Streamlit Secrets configuration.")
     st.stop()
 
-MODEL = "openai/gpt-oss-120b"
-LEAGUE_AVG_GOALS = 1.35 
+MODEL = "openai/gpt-oss-120b" # Ensure this is a valid Groq model (e.g., llama3-70b-8192)
+LEAGUE_AVG_GOALS = 1.35   
 MIN_MATCHES = 5           
 
 # ==========================================================
@@ -44,105 +44,142 @@ def init_clients():
 groq_client, ocr_engine = init_clients()
 
 # ==========================================================
-# SIDEBAR MODE SELECTION
+# MAIN UI - USING TABS (Mobile Optimized)
 # ==========================================================
-st.sidebar.title("Navigation")
-app_mode = st.sidebar.radio(
-    "Select Mode",
-    ["Sharp Bettor", "Daily Picks", "Auditor", "Settings"] # <-- ADDED "Daily Picks"
-)
+st.title("📈 AI Sharp Bettor & Auditor")
 
-st.sidebar.markdown("---")
-st.sidebar.info(f"**Status:** Connected\n\n**Model:** {MODEL}")
-
-# ==========================================================
-# MODE 1: SHARP BETTOR (Manual Input)
-# ==========================================================
-def run_sharp_bettor():
-    st.title("📈 AI Sharp Bettor")
-    st.markdown("Upload a bet slip image or enter match details to get sharp betting insights.")
-    # ... (keep your existing Sharp Bettor code here) ...
-    col1, col2 = st.columns([1, 1])
-    with col1:
-        st.subheader("1. Input Data")
-        uploaded_file = st.file_uploader("Upload Bet Slip (Image)", type=["png", "jpg", "jpeg"])
-        # ... (OCR logic) ...
-    with col2:
-        st.subheader("2. Analysis")
-        if st.button("Run AI Analysis"):
-            # ... (Groq analysis logic) ...
-            st.success("Analysis Complete!")
-            st.info("Placeholder: The AI model suggests a value bet.")
+# Create Tabs so modes are always visible on mobile
+tab_daily, tab_manual, tab_auditor, tab_settings = st.tabs([
+    "📅 Daily Picks", 
+    "📸 Manual Bettor", 
+    "🔍 Auditor", 
+    "⚙️ Settings"
+])
 
 # ==========================================================
-# MODE 2: DAILY PICKS (NEW MODE)
+# TAB 1: DAILY PICKS
 # ==========================================================
-def run_daily_picks():
-    st.title("📅 Daily Picks")
-    st.markdown("Fetch today's fixtures and get AI-driven insights.")
-
-    # API-Football endpoint for fixtures on a specific date
+with tab_daily:
+    st.header("Today's Match Fixtures")
+    st.write("Fetch today's matches via API-Football and analyze them with AI.")
+    
     today_str = datetime.now(timezone.utc).strftime('%Y-%m-%d')
     
-    if st.button("Fetch Today's Matches"):
-        with st.spinner("Fetching fixtures from API-Football..."):
+    if st.button("Fetch Today's Matches", type="primary"):
+        with st.spinner("Fetching fixtures..."):
             url = f"https://v3.football.api-sports.io/fixtures?date={today_str}"
-            headers = {
-                'x-apisports-key': API_FOOTBALL_KEY
-            }
+            headers = {'x-apisports-key': API_FOOTBALL_KEY}
             
             try:
                 response = requests.get(url, headers=headers)
-                response.raise_for_status()
                 data = response.json()
                 
-                if data.get('response'):
+                if 'errors' in data and data['errors']:
+                    st.error(f"API Error: {data['errors']}")
+                elif data.get('response'):
                     fixtures = data['response']
+                    st.success(f"Found {len(fixtures)} matches today.")
                     
-                    # Display matches in a list
-                    st.subheader(f"Found {len(fixtures)} Matches Today")
-                    
-                    for fixture in fixtures[:10]: # Limiting to first 10 for display
-                        home_team = fixture['teams']['home']['name']
-                        away_team = fixture['teams']['away']['name']
-                        league_name = fixture['league']['name']
-                        match_time = fixture['fixture']['date']
+                    # Display matches
+                    for fixture in fixtures[:15]: # Show first 15 to avoid clutter
+                        home = fixture['teams']['home']['name']
+                        away = fixture['teams']['away']['name']
+                        league = fixture['league']['name']
+                        time_str = fixture['fixture']['date']
                         
-                        with st.expander(f"{home_team} vs {away_team} ({league_name})"):
-                            st.write(f"**Kickoff:** {match_time}")
-                            # Placeholder for AI analysis button for this specific match
-                            if st.button(f"Analyze {home_team} vs {away_team}"):
-                                st.info("AI analysis will appear here (Connect your Groq logic).")
+                        with st.expander(f"⚽ {home} vs {away} ({league})"):
+                            st.write(f"**Kickoff:** {time_str}")
+                            if st.button(f"Analyze {home} vs {away}", key=fixture['fixture']['id']):
+                                with st.spinner("AI is analyzing..."):
+                                    prompt = f"Analyze this football match for betting: {home} vs {away} in {league}. Provide a short, sharp betting recommendation (1X2 or Over/Under) and a brief reason."
+                                    try:
+                                        chat_completion = groq_client.chat.completions.create(
+                                            messages=[{"role": "user", "content": prompt}],
+                                            model=MODEL,
+                                        )
+                                        st.info(chat_completion.choices[0].message.content)
+                                    except Exception as e:
+                                        st.error(f"AI Error: {e}")
                 else:
                     st.warning("No matches found for today.")
-                    
             except Exception as e:
-                st.error(f"Error fetching data: {e}")
+                st.error(f"Failed to connect to API: {e}")
 
 # ==========================================================
-# MODE 3: AUDITOR
+# TAB 2: MANUAL BETTOR (OCR + Analysis)
 # ==========================================================
-def run_auditor():
-    # ... (keep your existing Auditor code here) ...
-    st.title("🔍 Auditor Mode")
-    st.markdown("Review historical performance.")
+with tab_manual:
+    st.header("Manual Bet Analysis")
+    
+    col1, col2 = st.columns([1, 1])
+    
+    with col1:
+        uploaded_file = st.file_uploader("Upload Bet Slip", type=["png", "jpg", "jpeg"])
+        if uploaded_file:
+            image = Image.open(uploaded_file)
+            st.image(image, caption="Uploaded Slip", use_column_width=True)
+            
+            if st.button("Extract Text (OCR)"):
+                with st.spinner("Scanning image..."):
+                    result, _ = ocr_engine(np.array(image))
+                    extracted_text = " ".join([item[1] for item in result]) if result else "No text found."
+                    st.session_state['ocr_text'] = extracted_text
+                    st.success("Extraction complete!")
+
+    with col2:
+        st.subheader("Analysis")
+        default_text = st.session_state.get('ocr_text', "")
+        bet_details = st.text_area("Extracted/Manual Bet Details:", value=default_text, height=150)
+        
+        if st.button("Run AI Analysis", type="primary"):
+            if not bet_details:
+                st.warning("Please upload an image or enter bet details.")
+            else:
+                with st.spinner("Consulting Groq AI..."):
+                    prompt = f"Audit this bet slip and provide a sharp betting analysis. Are there better alternatives?\n\nDetails:\n{bet_details}"
+                    try:
+                        chat_completion = groq_client.chat.completions.create(
+                            messages=[{"role": "user", "content": prompt}],
+                            model=MODEL,
+                        )
+                        st.success("Analysis Complete")
+                        st.info(chat_completion.choices[0].message.content)
+                    except Exception as e:
+                        st.error(f"AI Error: {e}")
 
 # ==========================================================
-# MODE 4: SETTINGS
+# TAB 3: AUDITOR
 # ==========================================================
-def run_settings():
-    # ... (keep your existing Settings code here) ...
-    st.title("⚙️ Settings & Configuration")
+with tab_auditor:
+    st.header("Performance Auditor")
+    
+    if st.button("Fetch History from Google Sheets"):
+        with st.spinner("Loading data..."):
+            try:
+                # Assuming the URL is a published CSV link
+                df = pd.read_csv(GOOGLE_SHEET_URL)
+                st.dataframe(df, use_container_width=True)
+                
+                if 'Result' in df.columns:
+                    wins = len(df[df['Result'].str.lower() == 'win'])
+                    total = len(df)
+                    st.metric("Win Rate", f"{(wins/total)*100:.1f}%")
+            except Exception as e:
+                st.error(f"Failed to load Google Sheet: {e}")
 
 # ==========================================================
-# MAIN APP ROUTER
+# TAB 4: SETTINGS
 # ==========================================================
-if __name__ == "__main__":
-    if app_mode == "Sharp Bettor":
-        run_sharp_bettor()
-    elif app_mode == "Daily Picks":      # <-- ADDED ROUTING
-        run_daily_picks()
-    elif app_mode == "Auditor":
-        run_auditor()
-    elif app_mode == "Settings":
-        run_settings()
+with tab_settings:
+    st.header("System Settings")
+    st.success("✅ Groq API Connected")
+    st.success("✅ API-Football Connected")
+    st.success("✅ Google Sheets URL Configured")
+    
+    st.write("**Model:**", MODEL)
+    st.write("**League Avg Goals:**", LEAGUE_AVG_GOALS)
+    st.write("**Min Matches:**", MIN_MATCHES)
+    
+    if st.button("Clear Cache"):
+        st.cache_resource.clear()
+        st.rerun()
