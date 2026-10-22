@@ -42,7 +42,7 @@ def get_headers():
     return {"Authorization": f"Bearer {FC_API_KEY}"}
 
 def fetch_fixtures(league_slug):
-    """Fetches upcoming fixtures and extracts deep model predictions."""
+    """Fetches upcoming fixtures and extracts deep model predictions safely."""
     try:
         url = f"{BASE_URL}/leagues/{league_slug}/fixtures/"
         r = requests.get(url, headers=get_headers(), timeout=15)
@@ -55,27 +55,27 @@ def fetch_fixtures(league_slug):
         fixtures = []
         
         for match in matches:
+            if not isinstance(match, dict):
+                continue
+                
             # Safely navigate the nested JSON structure
-            model_preds = match.get("model_predictions", {})
-            dc_v2 = model_preds.get("dc_v2", {})
-            raw = dc_v2.get("raw", {})
+            model_preds = match.get("model_predictions") or {}
+            dc_v2 = model_preds.get("dc_v2") or {}
+            raw = dc_v2.get("raw") or {}
             
-            # 1. HT Under 1.5 Probability (Check multiple possible keys)
+            # Skip matches that don't have predictions generated yet
+            if not raw:
+                continue
+            
+            # 1. HT Under 1.5 Probability
             ht_over = raw.get("ht_over_1_5") or raw.get("ht_over_15")
-            if ht_over is not None:
-                ht_under = 1.0 - float(ht_over)
-            else:
-                ht_under = 0.5 # Fallback if key is missing
+            ht_under = 1.0 - float(ht_over) if ht_over is not None else 0.5
             
-            # 2. BTTS Probability (Both Teams to Score)
+            # 2. BTTS Probability
             btts_prob = float(raw.get("btts", 0.5))
             
-            # 3. Full-Time Under 2.5 Probability (good proxy for low scoring)
+            # 3. Full-Time Under 2.5 Probability
             ft_under_25 = float(raw.get("under_2_5", 0.5))
-            
-            # 4. Home & Away Win Probabilities
-            home_prob = float(raw.get("home", 0.33))
-            away_prob = float(raw.get("away", 0.33))
             
             fixtures.append({
                 "team1": match.get("home_team", "Unknown"),
@@ -85,9 +85,7 @@ def fetch_fixtures(league_slug):
                 "date": match.get("match_date", ""),
                 "ht_under_prob": ht_under,
                 "btts_prob": btts_prob,
-                "ft_under_25_prob": ft_under_25,
-                "home_prob": home_prob,
-                "away_prob": away_prob
+                "ft_under_25_prob": ft_under_25
             })
             
         return fixtures, None
@@ -124,7 +122,6 @@ with tab_daily:
     st.header("Match Hunter: HALF-TIME Under 1.5 goals")
     st.caption("Filter by HT Under 1.5 probability, BTTS, and Under 2.5 to find the safest picks.")
     
-    # League Selection
     league_options = {
         "Premier League": "premier",
         "La Liga": "laliga",
@@ -144,10 +141,10 @@ with tab_daily:
         if err:
             st.error(err)
         elif not fixtures:
-            st.warning("No upcoming fixtures found for this league.")
+            st.warning("No upcoming fixtures with predictions found for this league.")
         else:
             st.session_state.fixtures = fixtures
-            st.success(f"Loaded {len(fixtures)} fixtures from {selected_league_name}.")
+            st.success(f"Loaded {len(fixtures)} fixtures with predictions from {selected_league_name}.")
 
     # Display Results with Multi-Filters
     if "fixtures" in st.session_state and st.session_state.fixtures:
@@ -163,14 +160,12 @@ with tab_daily:
         with col3:
             min_ft_under = st.slider("Min FT Under 2.5 %", 20, 80, 50, help="High Full-Time Under 2.5 supports a low-scoring game.")
             
-        # Filter matches based on combined criteria
         candidates = []
         for f in fixtures:
             ht_pct = round(f["ht_under_prob"] * 100, 1)
             btts_pct = round(f["btts_prob"] * 100, 1)
             ft_under_pct = round(f["ft_under_25_prob"] * 100, 1)
             
-            # Apply all filters
             if (ht_pct >= min_ht_under) and (btts_pct <= max_btts) and (ft_under_pct >= min_ft_under):
                 candidates.append({
                     "Match": f"{f['team1']} vs {f['team2']}",
@@ -183,7 +178,6 @@ with tab_daily:
                 
         if candidates:
             st.subheader(f"🎯 {len(candidates)} High-Confidence Picks")
-            # Sort by highest HT Under probability
             candidates = sorted(candidates, key=lambda x: x["HT Under 1.5 %"], reverse=True)
             st.dataframe(pd.DataFrame(candidates), use_container_width=True, hide_index=True)
             
