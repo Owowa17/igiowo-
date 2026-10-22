@@ -34,21 +34,36 @@ def extract_json(text, is_array=True):
     except Exception:
         return [] if is_array else {}
 
+# --- HELPER: SAFELY CONVERT TO INTEGER ---
+def safe_int(val):
+    try:
+        val = str(val).strip().lower()
+        if 'high' in val: return 80
+        if 'medium' in val or 'med' in val: return 50
+        if 'low' in val: return 20
+        return int(float(val))
+    except:
+        return 0
+
 # --- REAL-TIME STATS API FUNCTION ---
 def fetch_team_stats(team_name, api_key):
     if not team_name or not api_key: return None
     headers = {"x-apisports-key": api_key}
     try:
-        search_url = f"https://v3.football.api-sports.io/teams?search={team_name}"
+        # Clean team name for better API matching
+        clean_name = team_name.replace('FC', '').replace('U21', '').replace('Reserves', '').strip()
+        search_url = f"https://v3.football.api-sports.io/teams?search={clean_name}"
         search_res = requests.get(search_url, headers=headers, timeout=10).json()
         
-        if not search_res.get('response'): return None
+        if not search_res.get('response'): 
+            return None
         
         team_id = search_res['response'][0]['team']['id']
         fixtures_url = f"https://v3.football.api-sports.io/fixtures?team={team_id}&last=5"
         fixtures_res = requests.get(fixtures_url, headers=headers, timeout=10).json()
         
-        if not fixtures_res.get('response'): return None
+        if not fixtures_res.get('response'): 
+            return None
             
         goals_scored, goals_conceded = 0, 0
         matches_played = len(fixtures_res['response'])
@@ -97,7 +112,7 @@ with tab1:
                     if result:
                         raw_text = "\n".join([line[1] for line in result])
                     else:
-                        st.warning("⚠️ No text found in image.")
+                        st.warning("⚠️ No text found in image. Please try a clearer screenshot.")
                 except Exception as e:
                     st.error(f"OCR Error: {e}")
     else:
@@ -119,7 +134,7 @@ with tab1:
                     matches = extract_json(res.choices[0].message.content, is_array=True)
                     
                     if not matches:
-                        st.error("❌ Could not find any valid matches.")
+                        st.error("❌ Could not find any valid matches. Please ensure the team names and odds are visible.")
                     else:
                         st.success(f"✅ Found {len(matches)} matches. Calculating True Value...")
                         today_date = datetime.now().strftime("%Y-%m-%d")
@@ -153,13 +168,14 @@ with tab1:
                             2. Focus on 'Weak Markets': Pick 'Over 1.5 Goals', 'Over 2.5 Goals' or 'Both Teams to Score (BTTS)'.
                             3. If odds are extremely low (below 1.30), write 'TRAP - AVOID'.
                             
-                            Return JSON with keys: "pick", "confidence" (1-100), "edge_reason".
+                            Return JSON with keys: "pick", "confidence" (INTEGER 1-100 ONLY), "edge_reason".
                             """
                             p_res = client.chat.completions.create(model="openai/gpt-oss-120b", messages=[{"role": "user", "content": pred_prompt}], temperature=0.2)
                             p_data = extract_json(p_res.choices[0].message.content, is_array=False)
                             
                             pick_val = p_data.get('pick', 'No Value')
-                            conf_val = int(float(p_data.get('confidence', 0)))
+                            conf_val = safe_int(p_data.get('confidence', 0))
+                            
                             risk_label = "HIGH RISK / TRAP" if "TRAP" in pick_val.upper() else ("LOW" if conf_val >= 75 else "MED" if conf_val >= 50 else "HIGH")
                             
                             with st.expander(f"⚽ {t1} vs {t2} - {pick_val} ({conf_val}%) - {risk_label}"):
@@ -175,8 +191,16 @@ with tab1:
             elif "Audit My Booking" in app_mode:
                 slip_prompt = f"""
                 Extract the football selections from this text: {raw_text}
-                CRITICAL RULE: SportyBet lists the market ABOVE the team names. Do NOT default to 'Home'.
+                
+                CRITICAL RULES:
+                1. The OCR text might have the bet type (e.g., 'Over 2.5', 'Over 1.5', 'Home', 'Away') written ABOVE or BEFORE the team names.
+                2. You MUST capture the exact bet type the user selected. 
+                3. If the text contains the word 'Over' or 'Under', your "user_pick" MUST be 'Over X.5' or 'Under X.5'. Do NOT write 'Home' or 'Away' if an Over/Under is present.
+                
                 Return a JSON array with keys: "match", "user_pick".
+                Example: If text says "Over 2.5\nAston Villa vs Man City", return {{"match": "Aston Villa vs Man City", "user_pick": "Over 2.5"}}.
+                Example: If text says "Home\nArsenal vs Everton", return {{"match": "Arsenal vs Everton", "user_pick": "Home"}}.
+                
                 Return ONLY valid JSON.
                 """
                 try:
@@ -203,11 +227,17 @@ with tab1:
                             if st2: ctx += f"{t2}: Scored {st2['avg_scored']}/game. "
                             if not ctx: ctx = "No stats available."
                             
-                            audit_prompt = f"Review bet: {s.get('user_pick')} for {match_str}. Stats: {ctx}. Is this safe, risky, or trap? Return JSON: 'verdict', 'confidence', 'reason'."
+                            audit_prompt = f"""
+                            Review this user's bet: {s.get('user_pick')} for {match_str}.
+                            Stats: {ctx}
+                            Is this a safe bet, risky, or a trap? Give confidence (INTEGER 1-100 ONLY).
+                            Return JSON: "verdict" (Safe/Risky/Trap), "confidence", "reason".
+                            """
+                            
                             a_res = client.chat.completions.create(model="openai/gpt-oss-120b", messages=[{"role": "user", "content": audit_prompt}], temperature=0.1)
                             a_data = extract_json(a_res.choices[0].message.content, is_array=False)
                             
-                            conf = int(float(a_data.get('confidence', 0)))
+                            conf = safe_int(a_data.get('confidence', 0))
                             total_confidence += conf
                             
                             with st.expander(f"📝 {match_str} - Pick: {s.get('user_pick')}"):
