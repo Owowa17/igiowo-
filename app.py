@@ -164,7 +164,6 @@ with tab_daily:
     today_str = datetime.now(timezone.utc).strftime('%d/%m/%Y')
 
     if st.button("Fetch & Analyze Matches", type="primary"):
-        # 🔴 FIXED INDENTATION HERE
         with st.spinner("Fetching fixtures from LiveScore MCP..."):
             async def get_fixtures():
                 try:
@@ -227,27 +226,38 @@ with tab_daily:
             except Exception as e:
                 st.error(f"Outer Error: {e}")
 
+    # ==========================================
+    # UPDATED HUNTER MODE WITH LIVE DEBUGGING
+    # ==========================================
     if hunter_mode and st.session_state.fixtures:
         if st.button("Run Under 1.5 Hunter"):
             st.session_state.hunted_matches = []
             matches_to_scan = st.session_state.fixtures[:15]
             progress_bar = st.progress(0)
+            debug_container = st.empty() # Live debug output
 
             for i, fixture in enumerate(matches_to_scan):
                 home = fixture.get('team1', 'Unknown')
                 away = fixture.get('team2', 'Unknown')
                 league = fixture.get('league', 'Unknown')
 
+                debug_container.info(f"🔍 Scanning {i+1}/{len(matches_to_scan)}: {home} vs {away}")
+
                 home_stats = fetch_team_stats(home)
                 away_stats = fetch_team_stats(away)
 
-                if home_stats and away_stats:
+                if not home_stats or not away_stats:
+                    debug_container.warning(f"⚠️ Could not fetch stats for {home} or {away}. Skipping.")
+                else:
                     under_prob = calculate_under_1_5_probability(
                         home_stats['avg_for'], home_stats['avg_against'],
                         away_stats['avg_for'], away_stats['avg_against']
                     )
+                    
+                    debug_container.info(f"📊 Math Prob for {home} vs {away}: {under_prob:.1%}")
 
-                    if under_prob > 0.55:
+                    # TEMPORARILY LOWERED THRESHOLD TO 0.40 FOR TESTING
+                    if under_prob > 0.40:
                         prompt = f"""
                         The mathematical model suggests a {under_prob:.1%} chance of Under 1.5 goals for {home} vs {away} in {league}.
                         Based on these stats, provide a short, sharp confirmation (YES or NO) and a 1-sentence reason.
@@ -267,9 +277,11 @@ with tab_daily:
                                 "prob": under_prob,
                                 "analysis": ai_response
                             })
+                            debug_container.success(f"✅ Found match! {home} vs {away} added to list.")
                 
                 progress_bar.progress((i + 1) / len(matches_to_scan))
             
+            debug_container.empty() # Clear debug text
             st.success(f"Hunter scan complete! Found {len(st.session_state.hunted_matches)} potential matches.")
 
     if st.session_state.hunted_matches:
