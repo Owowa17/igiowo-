@@ -5,12 +5,16 @@ import numpy as np
 import pandas as pd
 import asyncio
 import json
+import nest_asyncio
 from PIL import Image
 from rapidocr_onnxruntime import RapidOCR
 from groq import Groq
 from datetime import datetime, timezone
 from dotenv import load_dotenv
 from scipy.stats import poisson
+
+# Apply nest_asyncio to allow async operations inside Streamlit
+nest_asyncio.apply()
 
 # ==========================================================
 # MCP IMPORTS (Streamable HTTP)
@@ -19,7 +23,7 @@ try:
     from mcp.client.streamable_http import streamablehttp_client
     from mcp import ClientSession
 except ImportError:
-    st.error("❌ MCP Streamable HTTP client not found. Please ensure 'mcp>=1.8.0' is in requirements.txt.")
+    st.error("❌ MCP Streamable HTTP client not found. Please ensure 'mcp>=1.8.0,<2' is in requirements.txt.")
     st.stop()
 
 # ==========================================================
@@ -60,47 +64,45 @@ def calculate_under_1_5_probability(home_avg_goals_for, home_avg_goals_against, 
 # ==========================================================
 async def fetch_team_stats_mcp_async(team_name):
     try:
-        async with streamablehttp_client(MCP_URL) as (read_stream, write_stream, _):
-            async with ClientSession(read_stream, write_stream) as session:
-                await session.initialize()
-                # Search for team
-                search_result = await session.call_tool("search", {"query": team_name})
-                search_data = json.loads(search_result.content[0].text)
-                
-                if not search_data or "teams" not in search_data or len(search_data["teams"]) == 0:
-                    return None
-                
-                team_id = search_data["teams"][0]["id"]
-                
-                # Get team details
-                team_result = await session.call_tool("get_team", {"team_id": team_id})
-                team_data = json.loads(team_result.content[0].text)
-                
-                stats = team_data.get("statistics", team_data)
-                goals_for = stats.get("goals_for", stats.get("goals_scored", 0))
-                goals_against = stats.get("goals_against", stats.get("goals_conceded", 0))
-                matches_played = stats.get("matches_played", stats.get("games", 1))
+        # Add timeout to prevent hanging
+        async with asyncio.timeout(15):
+            async with streamablehttp_client(MCP_URL) as (read_stream, write_stream, _):
+                async with ClientSession(read_stream, write_stream) as session:
+                    await session.initialize()
+                    
+                    search_result = await session.call_tool("search", {"query": team_name})
+                    search_data = json.loads(search_result.content[0].text)
+                    
+                    if not search_data or "teams" not in search_data or len(search_data["teams"]) == 0:
+                        return None
+                    
+                    team_id = search_data["teams"][0]["id"]
+                    team_result = await session.call_tool("get_team", {"team_id": team_id})
+                    team_data = json.loads(team_result.content[0].text)
+                    
+                    stats = team_data.get("statistics", team_data)
+                    goals_for = stats.get("goals_for", stats.get("goals_scored", 0))
+                    goals_against = stats.get("goals_against", stats.get("goals_conceded", 0))
+                    matches_played = stats.get("matches_played", stats.get("games", 1))
 
-                if matches_played == 0:
-                    return None
+                    if matches_played == 0:
+                        return None
 
-                return {
-                    "avg_for": round(goals_for / matches_played, 2),
-                    "avg_against": round(goals_against / matches_played, 2),
-                    "matches": matches_played,
-                    "name": search_data["teams"][0]["name"]
-                }
+                    return {
+                        "avg_for": round(goals_for / matches_played, 2),
+                        "avg_against": round(goals_against / matches_played, 2),
+                        "matches": matches_played,
+                        "name": search_data["teams"][0]["name"]
+                    }
     except Exception as e:
-        st.error(f"Team Stats Error for {team_name}: {type(e).__name__} - {e}")
+        # Suppress individual team errors so the scan doesn't stop entirely
         return None
 
 def fetch_team_stats(team_name):
     try:
         return asyncio.run(fetch_team_stats_mcp_async(team_name))
-    except RuntimeError:
-        loop = asyncio.new_event_loop()
-        asyncio.set_event_loop(loop)
-        return loop.run_until_complete(fetch_team_stats_mcp_async(team_name))
+    except Exception:
+        return None
 
 # ==========================================================
 # INITIALIZE CLIENTS
@@ -138,7 +140,6 @@ with tab_daily:
         st.session_state.fixtures = None
         st.session_state.hunted_matches = []
 
-    # Date and Timezone for MCP
     today_str = datetime.now(timezone.utc).strftime('%Y-%m-%d')
     timezone_str = "UTC"
 
@@ -146,14 +147,19 @@ with tab_daily:
         with st.spinner("Fetching fixtures from LiveScore MCP via Streamable HTTP..."):
             async def get_fixtures():
                 try:
-                    async with streamablehttp_client(MCP_URL) as (read_stream, write_stream, _):
-                        async with ClientSession(read_stream, write_stream) as session:
-                            await session.initialize()
-                            # Add timezone parameter
-                            res = await session.call_tool("get_day_fixtures", {"date": today_str, "timezone": timezone_str, "format": "json"})
-                            return json.loads(res.content[0].text)
+                    async with asyncio.timeout(20): # 20-second timeout
+                        async with streamablehttp_client(MCP_URL) as (read_stream, write_stream, _):
+                            async with ClientSession(read_stream, write_stream) as session:
+                                await session.initialize()
+                                res = await session.call_tool("get_day_fixtures", {"date": today_str, "timezone": timezone_str, "format": "json"})
+                                return json.loads(res.content[0].text)
                 except Exception as e:
-                    st.error(f"Underlying MCP Error: {type(e).__name__} - {str(e)}")
+                    # Unwrap anyio ExceptionGroup to show real error
+                    if hasattr(e, 'exceptions') and e.exceptions:
+                        real_err = e.exceptions[0]
+                        st.error(f"MCP Connection Failed: {type(real_err).__name__} - {real_err}")
+                    else:
+                        st.error(f"MCP Connection Failed: {type(e).__name__} - {e}")
                     return None
 
             try:
