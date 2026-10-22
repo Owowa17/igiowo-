@@ -41,10 +41,31 @@ BASE_URL = "https://footballcharts-backend.onrender.com/api/v1"
 def get_headers():
     return {"Authorization": f"Bearer {FC_API_KEY}"}
 
-def fetch_fixtures(league_slug):
+@st.cache_data(ttl=86400) # Cache league list for 24 hours
+def fetch_leagues():
+    """Fetches the list of all available leagues and their keys."""
+    try:
+        url = f"{BASE_URL}/leagues/"
+        r = requests.get(url, headers=get_headers(), timeout=15)
+        r.raise_for_status()
+        data = r.json()
+        
+        # Build a dictionary of {display_name: league_key}
+        leagues = {}
+        for league in data:
+            # Adjust these keys based on the actual API response structure
+            name = league.get("name", "Unknown")
+            key = league.get("key") or league.get("slug")
+            if key:
+                leagues[name] = key
+        return leagues, None
+    except Exception as e:
+        return {}, f"Failed to fetch leagues: {str(e)}"
+
+def fetch_fixtures(league_key):
     """Fetches upcoming fixtures and extracts deep model predictions safely."""
     try:
-        url = f"{BASE_URL}/leagues/{league_slug}/fixtures/"
+        url = f"{BASE_URL}/leagues/{league_key}/fixtures/"
         r = requests.get(url, headers=get_headers(), timeout=15)
         
         if r.status_code != 200:
@@ -74,7 +95,7 @@ def fetch_fixtures(league_slug):
             fixtures.append({
                 "team1": match.get("home_team", "Unknown"),
                 "team2": match.get("away_team", "Unknown"),
-                "league": league_slug,
+                "league": league_key,
                 "time": match.get("time", ""),
                 "date": match.get("match_date", ""),
                 "ht_under_prob": ht_under,
@@ -116,37 +137,35 @@ with tab_daily:
     st.header("Match Hunter: HALF-TIME Under 1.5 goals")
     st.caption("Filter by HT Under 1.5 probability, BTTS, and Under 2.5 to find the safest picks.")
     
-    league_options = {
-        "Premier League": "premier",
-        "La Liga (Spain)": "spain/laliga",
-        "Bundesliga (Germany)": "germany/bundesliga",
-        "Serie A (Italy)": "italy/serie-a",
-        "Ligue 1 (France)": "france/ligue-1",
-        "Eredivisie (Netherlands)": "netherlands/eredivisie",
-        "Custom Slug...": "custom"
-    }
+    # 1. Fetch available leagues dynamically
+    with st.spinner("Loading available leagues..."):
+        league_map, league_err = fetch_leagues()
     
-    selected_name = st.selectbox("Select a League", list(league_options.keys()))
+    if league_err:
+        st.error(league_err)
+        st.stop()
+        
+    if not league_map:
+        st.warning("No leagues found from the API.")
+        st.stop()
+        
+    # 2. Let the user select a league by name
+    selected_league_name = st.selectbox("Select a League", sorted(league_map.keys()))
+    league_key = league_map[selected_league_name]
     
-    if selected_name == "Custom Slug...":
-        league_slug = st.text_input("Enter Custom League Slug (e.g., 'england/championship')", "")
-    else:
-        league_slug = league_options[selected_name]
+    st.info(f"Selected League Key: `{league_key}`")
     
     if st.button("📥 Fetch Fixtures", type="primary"):
-        if not league_slug:
-            st.error("Please provide a league slug.")
+        with st.spinner(f"Fetching from Football-Charts for '{selected_league_name}'..."):
+            fixtures, err = fetch_fixtures(league_key)
+            
+        if err:
+            st.error(err)
+        elif not fixtures:
+            st.warning(f"No upcoming fixtures with predictions found for '{selected_league_name}'. Try another league.")
         else:
-            with st.spinner(f"Fetching from Football-Charts for '{league_slug}'..."):
-                fixtures, err = fetch_fixtures(league_slug)
-                
-            if err:
-                st.error(err)
-            elif not fixtures:
-                st.warning(f"No upcoming fixtures with predictions found for '{league_slug}'. Try a different slug.")
-            else:
-                st.session_state.fixtures = fixtures
-                st.success(f"Loaded {len(fixtures)} fixtures from '{league_slug}'.")
+            st.session_state.fixtures = fixtures
+            st.success(f"Loaded {len(fixtures)} fixtures from '{selected_league_name}'.")
 
     # Display Results with Multi-Filters
     if "fixtures" in st.session_state and st.session_state.fixtures:
@@ -235,10 +254,11 @@ with tab_auditor:
                 st.error(f"Failed to load Google Sheet: {e}")
 
 # ---------------------------------------------------------- TAB 4
-with tab_settings:  # 🔴 FIXED: Changed from st.settings to tab_settings
+with tab_settings:
     st.header("Settings & Diagnostics")
     
     if st.button("Clear App Cache"):
         st.cache_resource.clear()
+        st.cache_data.clear()
         st.session_state.fixtures = None
         st.rerun()
