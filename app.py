@@ -41,33 +41,9 @@ BASE_URL = "https://footballcharts-backend.onrender.com/api/v1"
 def get_headers():
     return {"Authorization": f"Bearer {FC_API_KEY}"}
 
-def find_probability(data, required_keywords):
-    """
-    Recursively searches a dictionary for a value where the key contains all required keywords.
-    Example: find_probability(data, ['ht', 'over', '1.5'])
-    """
-    if isinstance(data, dict):
-        for k, v in data.items():
-            k_lower = str(k).lower()
-            # Check if all keywords are in the key string
-            if all(kw in k_lower for kw in required_keywords):
-                if isinstance(v, (int, float)):
-                    return float(v)
-                elif isinstance(v, str):
-                    try:
-                        return float(v)
-                    except ValueError:
-                        pass
-            # Recurse deeper
-            if isinstance(v, dict):
-                res = find_probability(v, required_keywords)
-                if res is not None:
-                    return res
-    return None
-
 @st.cache_data(ttl=86400)
 def fetch_leagues():
-    """Fetches all available leagues and handles the exact API JSON structure."""
+    """Fetches all available leagues dynamically."""
     try:
         url = f"{BASE_URL}/leagues/"
         r = requests.get(url, headers=get_headers(), timeout=15)
@@ -88,14 +64,12 @@ def fetch_leagues():
                         display_name = f"{name} ({country})" if country else name
                         leagues[display_name] = str(key)
                         
-        if not leagues:
-            return {}, f"Could not parse leagues. Raw response: {str(data)[:100]}"
         return leagues, None
     except Exception as e:
         return {}, f"Failed to fetch leagues: {str(e)}"
 
 def fetch_fixtures(league_key):
-    """Fetches fixtures and uses a deep search to find predictions."""
+    """Fetches fixtures and extracts probabilities using the exact JSON structure."""
     try:
         url = f"{BASE_URL}/leagues/{league_key}/fixtures/"
         r = requests.get(url, headers=get_headers(), timeout=15)
@@ -105,46 +79,37 @@ def fetch_fixtures(league_key):
             
         data = r.json()
         matches = data.get("matches", [])
-        
-        if matches:
-            st.session_state.raw_fixture = matches[0]
-            
         fixtures = []
         
         for match in matches:
             if not isinstance(match, dict):
                 continue
                 
+            # Navigate to dc_v2 (check 'calibrated' first, then 'raw')
             model_preds = match.get("model_predictions") or {}
+            dc_v2 = model_preds.get("dc_v2") or {}
+            preds = dc_v2.get("calibrated") or dc_v2.get("raw") or {}
             
-            # 1. HT Over 1.5 (Try multiple keyword combinations)
-            ht_over = (
-                find_probability(model_preds, ["ht", "over", "1.5"]) or 
-                find_probability(model_preds, ["ht", "over", "15"]) or
-                find_probability(model_preds, ["first", "half", "over"])
-            )
-            ht_under = 1.0 - ht_over if ht_over is not None else 0.5
+            # 1. HT Over 1.5 -> HT Under 1.5
+            ht_over = preds.get("ht_over_1.5")
+            ht_under_prob = (1.0 - float(ht_over)) if ht_over is not None else 0.5
             
-            # 2. BTTS
-            btts = find_probability(model_preds, ["btts"])
-            btts_prob = btts if btts is not None else 0.5
+            # 2. BTTS Yes
+            btts_yes = preds.get("btts_yes")
+            btts_prob = float(btts_yes) if btts_yes is not None else 0.5
             
-            # 3. FT Under 2.5
-            ft_under_25 = (
-                find_probability(model_preds, ["under", "2.5"]) or
-                find_probability(model_preds, ["under", "25"])
-            )
-            ft_under_25 = ft_under_25 if ft_under_25 is not None else 0.5
+            # 3. FT Over 2.5 -> FT Under 2.5
+            ft_over_25 = preds.get("over_2.5")
+            ft_under_25_prob = (1.0 - float(ft_over_25)) if ft_over_25 is not None else 0.5
             
             fixtures.append({
                 "team1": match.get("home_team", "Unknown"),
                 "team2": match.get("away_team", "Unknown"),
                 "league": league_key,
                 "time": match.get("time", ""),
-                "date": match.get("match_date", ""),
-                "ht_under_prob": ht_under,
+                "ht_under_prob": ht_under_prob,
                 "btts_prob": btts_prob,
-                "ft_under_25_prob": ft_under_25
+                "ft_under_25_prob": ft_under_25_prob
             })
             
         return fixtures, None
@@ -179,25 +144,22 @@ tab_daily, tab_manual, tab_auditor, tab_settings = st.tabs(
 # ---------------------------------------------------------- TAB 1
 with tab_daily:
     st.header("Match Hunter: HALF-TIME Under 1.5 goals")
-    st.caption("Filter by HT Under 1.5 probability, BTTS, and Under 2.5 to find the safest picks.")
+    st.caption("Filter by HT Under 1.5 probability, BTTS, and FT Under 2.5 to find the safest picks.")
     
     with st.spinner("Loading available leagues..."):
         league_map, league_err = fetch_leagues()
     
     use_manual = False
-    if league_err:
-        st.warning(f"Dynamic league fetch failed: {league_err}. Falling back to manual input.")
+    if league_err or not league_map:
         use_manual = True
-    elif not league_map:
-        st.warning("No leagues found from the API. Falling back to manual input.")
-        use_manual = True
+        st.warning(f"Could not load dynamic leagues. Falling back to manual input.")
         
     if not use_manual:
         selected_league_name = st.selectbox("Select a League", sorted(league_map.keys()))
         league_key = league_map[selected_league_name]
         st.info(f"Selected League Key: `{league_key}`")
     else:
-        league_key = st.text_input("Enter League Key manually (e.g., 'premier', 'algir1')", "premier")
+        league_key = st.text_input("Enter League Key manually (e.g., 'premier', 'turkey2')", "turkey2")
     
     if st.button("📥 Fetch Fixtures", type="primary"):
         if not league_key:
@@ -213,10 +175,6 @@ with tab_daily:
             else:
                 st.session_state.fixtures = fixtures
                 st.success(f"Loaded {len(fixtures)} fixtures from '{league_key}'.")
-                
-                if "raw_fixture" in st.session_state:
-                    with st.expander("🛠️ View Raw JSON of First Match (Debug)", expanded=True):
-                        st.json(st.session_state.raw_fixture)
 
     if "fixtures" in st.session_state and st.session_state.fixtures:
         fixtures = st.session_state.fixtures
@@ -224,12 +182,13 @@ with tab_daily:
         st.subheader("🔍 Multi-Factor Filters")
         col1, col2, col3 = st.columns(3)
         
+        # Default values set to match actual API ranges
         with col1:
-            min_ht_under = st.slider("Min HT Under 1.5 %", 20, 80, 40)
+            min_ht_under = st.slider("Min HT Under 1.5 %", 30, 90, 60)
         with col2:
             max_btts = st.slider("Max BTTS %", 20, 80, 50, help="Lower BTTS means a more one-sided or defensive game.")
         with col3:
-            min_ft_under = st.slider("Min FT Under 2.5 %", 20, 80, 50, help="High Full-Time Under 2.5 supports a low-scoring game.")
+            min_ft_under = st.slider("Min FT Under 2.5 %", 30, 90, 55, help="High FT Under 2.5 supports a low-scoring game.")
             
         candidates = []
         for f in fixtures:
