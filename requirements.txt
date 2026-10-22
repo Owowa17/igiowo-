@@ -2,9 +2,10 @@ opencv-python-headless
 streamlit
 requests
 python-dotenv
-gspread
-google-auth
 pandas
 rapidocr_onnxruntime
 groq
 pillow
+mcp
+scipy
+numpy
