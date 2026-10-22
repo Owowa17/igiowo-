@@ -42,7 +42,7 @@ def get_headers():
     return {"Authorization": f"Bearer {FC_API_KEY}"}
 
 def fetch_fixtures(league_slug):
-    """Fetches upcoming fixtures for a league with HT probabilities."""
+    """Fetches upcoming fixtures and extracts deep model predictions."""
     try:
         url = f"{BASE_URL}/leagues/{league_slug}/fixtures/"
         r = requests.get(url, headers=get_headers(), timeout=15)
@@ -52,28 +52,42 @@ def fetch_fixtures(league_slug):
             
         data = r.json()
         matches = data.get("matches", [])
-        
-        if matches:
-            # 🔴 DEBUG: Print the first match to see the exact keys
-            st.write("🔍 **Debug: Raw API Response for First Match:**")
-            st.json(matches[0])
-        
         fixtures = []
+        
         for match in matches:
-            # Try multiple possible key names for the probability
-            probs = match.get("probabilities", {})
-            ht_over = probs.get("ht_over_1_5") or probs.get("ht_over_15") or probs.get("over_1_5_ht") or 0.5
-            ht_under = 1.0 - float(ht_over)
+            # Safely navigate the nested JSON structure
+            model_preds = match.get("model_predictions", {})
+            dc_v2 = model_preds.get("dc_v2", {})
+            raw = dc_v2.get("raw", {})
             
-            # Try multiple possible key names for time
-            time_val = match.get("kickoff") or match.get("time") or match.get("date") or ""
+            # 1. HT Under 1.5 Probability (Check multiple possible keys)
+            ht_over = raw.get("ht_over_1_5") or raw.get("ht_over_15")
+            if ht_over is not None:
+                ht_under = 1.0 - float(ht_over)
+            else:
+                ht_under = 0.5 # Fallback if key is missing
+            
+            # 2. BTTS Probability (Both Teams to Score)
+            btts_prob = float(raw.get("btts", 0.5))
+            
+            # 3. Full-Time Under 2.5 Probability (good proxy for low scoring)
+            ft_under_25 = float(raw.get("under_2_5", 0.5))
+            
+            # 4. Home & Away Win Probabilities
+            home_prob = float(raw.get("home", 0.33))
+            away_prob = float(raw.get("away", 0.33))
             
             fixtures.append({
                 "team1": match.get("home_team", "Unknown"),
                 "team2": match.get("away_team", "Unknown"),
                 "league": league_slug,
-                "time": time_val,
-                "ht_under_prob": ht_under
+                "time": match.get("time", ""),
+                "date": match.get("match_date", ""),
+                "ht_under_prob": ht_under,
+                "btts_prob": btts_prob,
+                "ft_under_25_prob": ft_under_25,
+                "home_prob": home_prob,
+                "away_prob": away_prob
             })
             
         return fixtures, None
@@ -108,7 +122,7 @@ tab_daily, tab_manual, tab_auditor, tab_settings = st.tabs(
 # ---------------------------------------------------------- TAB 1
 with tab_daily:
     st.header("Match Hunter: HALF-TIME Under 1.5 goals")
-    st.caption("Probabilities are fetched directly from the Football-Charts model.")
+    st.caption("Filter by HT Under 1.5 probability, BTTS, and Under 2.5 to find the safest picks.")
     
     # League Selection
     league_options = {
@@ -135,32 +149,47 @@ with tab_daily:
             st.session_state.fixtures = fixtures
             st.success(f"Loaded {len(fixtures)} fixtures from {selected_league_name}.")
 
-    # Display Results
+    # Display Results with Multi-Filters
     if "fixtures" in st.session_state and st.session_state.fixtures:
         fixtures = st.session_state.fixtures
         
-        # Filter Slider
-        thr = st.slider("Minimum HT Under 1.5 Probability (%)", 20, 70, 40)
+        st.subheader("🔍 Multi-Factor Filters")
+        col1, col2, col3 = st.columns(3)
         
-        # Filter matches based on threshold
+        with col1:
+            min_ht_under = st.slider("Min HT Under 1.5 %", 20, 80, 45)
+        with col2:
+            max_btts = st.slider("Max BTTS %", 20, 80, 45, help="Lower BTTS means a more one-sided or defensive game.")
+        with col3:
+            min_ft_under = st.slider("Min FT Under 2.5 %", 20, 80, 50, help="High Full-Time Under 2.5 supports a low-scoring game.")
+            
+        # Filter matches based on combined criteria
         candidates = []
         for f in fixtures:
-            prob_pct = round(f["ht_under_prob"] * 100, 1)
-            if prob_pct >= thr:
+            ht_pct = round(f["ht_under_prob"] * 100, 1)
+            btts_pct = round(f["btts_prob"] * 100, 1)
+            ft_under_pct = round(f["ft_under_25_prob"] * 100, 1)
+            
+            # Apply all filters
+            if (ht_pct >= min_ht_under) and (btts_pct <= max_btts) and (ft_under_pct >= min_ft_under):
                 candidates.append({
                     "Match": f"{f['team1']} vs {f['team2']}",
                     "Time": f["time"],
-                    "HT Under 1.5 %": prob_pct,
+                    "HT Under 1.5 %": ht_pct,
+                    "BTTS %": btts_pct,
+                    "FT Under 2.5 %": ft_under_pct,
                     "Fair Odds": round(1 / f['ht_under_prob'], 2) if f['ht_under_prob'] > 0 else 0.0
                 })
                 
         if candidates:
-            st.subheader(f"🎯 Top Picks (≥ {thr}%)")
-            # Sort by highest probability
+            st.subheader(f"🎯 {len(candidates)} High-Confidence Picks")
+            # Sort by highest HT Under probability
             candidates = sorted(candidates, key=lambda x: x["HT Under 1.5 %"], reverse=True)
             st.dataframe(pd.DataFrame(candidates), use_container_width=True, hide_index=True)
+            
+            st.info("💡 **Pro Tip:** If BTTS is very low (< 35%) and HT Under 1.5 is > 50%, this is often a game where one team dominates possession but struggles to score early.")
         else:
-            st.info(f"No matches found with HT Under 1.5 probability above {thr}%.")
+            st.warning("No matches met all your filtering criteria. Try loosening the sliders.")
 
 # ---------------------------------------------------------- TAB 2
 with tab_manual:
@@ -213,16 +242,6 @@ with tab_auditor:
 with tab_settings:
     st.header("Settings & Diagnostics")
     
-    if st.button("Test Football-Charts API Connection"):
-        with st.spinner("Testing..."):
-            # Test with premier league
-            test_fixtures, err = fetch_fixtures("premier")
-            if err:
-                st.error(f"Connection failed: {err}")
-            else:
-                st.success(f"✅ Connected successfully! Found {len(test_fixtures)} upcoming Premier League matches.")
-                st.json(test_fixtures[:2]) # Show first 2 as a sample
-                
     if st.button("Clear App Cache"):
         st.cache_resource.clear()
         st.session_state.fixtures = None
