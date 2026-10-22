@@ -9,3 +9,4 @@ pillow
 mcp>=1.8.0,<2
 scipy
 numpy
+nest_asyncio
