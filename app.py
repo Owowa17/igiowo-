@@ -45,7 +45,6 @@ if not all([GOOGLE_SHEET_URL, GROQ_API_KEY]):
     st.stop()
 
 MODEL = "llama3-8b-8192"
-# Using the official SSE endpoint
 MCP_SSE_URL = "https://livescoremcp.com/sse"
 
 # ==========================================================
@@ -61,16 +60,15 @@ def calculate_under_1_5_probability(home_avg_goals_for, home_avg_goals_against, 
     return (prob_home_0 * prob_away_0) + (prob_home_1 * prob_away_0) + (prob_home_0 * prob_away_1)
 
 # ==========================================================
-# ERROR UNWRAPPER (Reveals the real connection issue)
+# ERROR UNWRAPPER
 # ==========================================================
 def unwrap_error(e):
-    """Recursively finds the real exception inside an ExceptionGroup."""
     if hasattr(e, 'exceptions') and e.exceptions:
         return unwrap_error(e.exceptions[0])
     return e
 
 # ==========================================================
-# LIVE SCORE MCP INTEGRATION (SSE)
+# LIVE SCORE MCP INTEGRATION
 # ==========================================================
 async def fetch_team_stats_mcp_async(team_name):
     try:
@@ -80,14 +78,20 @@ async def fetch_team_stats_mcp_async(team_name):
                     await session.initialize()
                     
                     search_result = await session.call_tool("search", {"query": team_name})
-                    search_data = json.loads(search_result.content[0].text)
+                    search_text = search_result.content[0].text if search_result.content else ""
+                    if not search_text:
+                        return None
+                    search_data = json.loads(search_text)
                     
                     if not search_data or "teams" not in search_data or len(search_data["teams"]) == 0:
                         return None
                     
                     team_id = search_data["teams"][0]["id"]
                     team_result = await session.call_tool("get_team", {"team_id": team_id})
-                    team_data = json.loads(team_result.content[0].text)
+                    team_text = team_result.content[0].text if team_result.content else ""
+                    if not team_text:
+                        return None
+                    team_data = json.loads(team_text)
                     
                     stats = team_data.get("statistics", team_data)
                     goals_for = stats.get("goals_for", stats.get("goals_scored", 0))
@@ -103,7 +107,7 @@ async def fetch_team_stats_mcp_async(team_name):
                         "matches": matches_played,
                         "name": search_data["teams"][0]["name"]
                     }
-    except Exception as e:
+    except Exception:
         return None
 
 def fetch_team_stats(team_name):
@@ -148,18 +152,37 @@ with tab_daily:
         st.session_state.fixtures = None
         st.session_state.hunted_matches = []
 
-    today_str = datetime.now(timezone.utc).strftime('%Y-%m-%d')
+    # 🔴 FIX: Use DD/MM/YYYY format as required by LiveScore MCP
+    today_str = datetime.now(timezone.utc).strftime('%d/%m/%Y')
 
     if st.button("Fetch & Analyze Matches", type="primary"):
-        with st.spinner("Fetching fixtures from LiveScore MCP via SSE..."):
+        with st.spinner("Fetching fixtures from LiveScore MCP..."):
             async def get_fixtures():
                 try:
                     async with asyncio.timeout(20):
                         async with sse_client(MCP_SSE_URL) as (read_stream, write_stream):
                             async with ClientSession(read_stream, write_stream) as session:
                                 await session.initialize()
-                                res = await session.call_tool("get_day_fixtures", {"date": today_str, "timezone": "UTC"})
-                                return json.loads(res.content[0].text)
+                                # Pass date in DD/MM/YYYY
+                                res = await session.call_tool("get_day_fixtures", {"date": today_str})
+                                
+                                # 🔴 FIX: Check if the response contains text before parsing
+                                if not res.content:
+                                    st.error("MCP returned empty content.")
+                                    return None
+                                
+                                raw_text = res.content[0].text
+                                if not raw_text:
+                                    st.error("MCP returned an empty string. The date format or parameters might be wrong.")
+                                    return None
+                                
+                                # Try parsing JSON
+                                try:
+                                    return json.loads(raw_text)
+                                except json.JSONDecodeError:
+                                    st.error(f"Invalid JSON received from MCP. Raw response: {raw_text[:200]}...")
+                                    return None
+                                    
                 except Exception as e:
                     real_err = unwrap_error(e)
                     st.error(f"MCP Connection Failed: {type(real_err).__name__} - {real_err}")
