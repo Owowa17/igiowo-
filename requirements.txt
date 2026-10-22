@@ -6,7 +6,6 @@ pandas
 rapidocr_onnxruntime
 groq
 pillow
-mcp
+mcp>=1.8.0
 scipy
 numpy
-mcp>=1.8.0
