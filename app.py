@@ -1,18 +1,18 @@
 import streamlit as st
-import json
-import re
-import math
-import time
-import difflib
 import requests
+import os
 import numpy as np
 import pandas as pd
-import os
+import asyncio
+import json
 from PIL import Image
 from rapidocr_onnxruntime import RapidOCR
 from groq import Groq
-from datetime import datetime, timezone, timedelta
+from datetime import datetime, timezone
 from dotenv import load_dotenv
+from scipy.stats import poisson
+from mcp import ClientSession
+from mcp.client.streamable_http import streamablehttp_client
 
 # ==========================================================
 # SECRETS & CONSTANTS
@@ -25,25 +25,89 @@ def get_secret(key):
     except (KeyError, FileNotFoundError):
         return os.getenv(key)
 
-# Load keys using the helper function
 GOOGLE_SHEET_URL = get_secret("GOOGLE_SHEET_URL")
 GROQ_API_KEY = get_secret("GROQ_API_KEY")
-FOOTBALL_API_KEY = get_secret("FOOTBALL_API_KEY")
+FOOTBALL_API_KEY = get_secret("FOOTBALL_API_KEY") # Kept for fallback if needed
 
-if not all([GOOGLE_SHEET_URL, GROQ_API_KEY, FOOTBALL_API_KEY]):
+if not all([GOOGLE_SHEET_URL, GROQ_API_KEY]):
     st.error("⚠️ Missing Secrets! Please check your Streamlit Secrets configuration.")
-    st.info("Required: FOOTBALL_API_KEY, GOOGLE_SHEET_URL, GROQ_API_KEY")
     st.stop()
 
-# Valid Groq Models: llama3-70b-8192, llama3-8b-8192, mixtral-8x7b-32768
-MODEL = "llama3-70b-8192" 
-LEAGUE_AVG_GOALS = 1.35   
-MIN_MATCHES = 5           
+MODEL = "llama3-8b-8192"
+MCP_URL = "https://livescoremcp.com/mcp"
 
 # ==========================================================
-# PAGE CONFIGURATION
+# POISSON PROBABILITY FUNCTION
 # ==========================================================
-st.set_page_config(page_title="AI Sharp Bettor", page_icon="📈", layout="wide")
+def calculate_under_1_5_probability(home_avg_goals_for, home_avg_goals_against, away_avg_goals_for, away_avg_goals_against):
+    home_lambda = (home_avg_goals_for + away_avg_goals_against) / 2
+    away_lambda = (away_avg_goals_for + home_avg_goals_against) / 2
+
+    prob_home_0 = poisson.pmf(0, home_lambda)
+    prob_home_1 = poisson.pmf(1, home_lambda)
+    prob_away_0 = poisson.pmf(0, away_lambda)
+    prob_away_1 = poisson.pmf(1, away_lambda)
+
+    prob_0_0 = prob_home_0 * prob_away_0
+    prob_1_0 = prob_home_1 * prob_away_0
+    prob_0_1 = prob_home_0 * prob_away_1
+
+    return prob_0_0 + prob_1_0 + prob_0_1
+
+# ==========================================================
+# LIVE SCORE MCP INTEGRATION
+# ==========================================================
+async def fetch_team_stats_mcp_async(team_name):
+    """Fetches team stats using LiveScore MCP Streamable HTTP transport."""
+    try:
+        async with streamablehttp_client(MCP_URL) as (read_stream, write_stream, _):
+            async with ClientSession(read_stream, write_stream) as session:
+                await session.initialize()
+
+                # 1. Search for the team to get its ID
+                search_result = await session.call_tool("search", {"query": team_name})
+                search_data = json.loads(search_result.content[0].text)
+                
+                if not search_data or "teams" not in search_data or len(search_data["teams"]) == 0:
+                    return None
+                
+                team_id = search_data["teams"][0]["id"]
+
+                # 2. Fetch team details
+                team_result = await session.call_tool("get_team", {"team_id": team_id})
+                team_data = json.loads(team_result.content[0].text)
+
+                # 3. Extract statistics (flexible parsing as exact schema may vary)
+                # We look for common keys that represent goals and matches
+                stats = team_data.get("statistics", team_data)
+                
+                goals_for = stats.get("goals_for", stats.get("goals_scored", 0))
+                goals_against = stats.get("goals_against", stats.get("goals_conceded", 0))
+                matches_played = stats.get("matches_played", stats.get("games", 1))
+
+                if matches_played == 0:
+                    return None
+
+                return {
+                    "avg_for": round(goals_for / matches_played, 2),
+                    "avg_against": round(goals_against / matches_played, 2),
+                    "matches": matches_played,
+                    "name": search_data["teams"][0]["name"]
+                }
+    except Exception as e:
+        # Fallback or silent fail
+        return None
+
+def fetch_team_stats(team_name):
+    """Synchronous wrapper for Streamlit."""
+    try:
+        return asyncio.run(fetch_team_stats_mcp_async(team_name))
+    except RuntimeError:
+        # If asyncio.run fails due to an existing event loop in Streamlit,
+        # use a new event loop.
+        loop = asyncio.new_event_loop()
+        asyncio.set_event_loop(loop)
+        return loop.run_until_complete(fetch_team_stats_mcp_async(team_name))
 
 # ==========================================================
 # INITIALIZE CLIENTS
@@ -57,139 +121,145 @@ def init_clients():
 groq_client, ocr_engine = init_clients()
 
 # ==========================================================
-# MAIN UI - USING TABS (Mobile Optimized)
+# MAIN UI
 # ==========================================================
 st.title("📈 AI Sharp Bettor & Auditor")
 
 tab_daily, tab_manual, tab_auditor, tab_settings = st.tabs([
-    "📅 Daily Picks", 
+    "🎯 Hunter & Daily Picks", 
     "📸 Manual Bettor", 
     "🔍 Auditor", 
     "⚙️ Settings"
 ])
 
 # ==========================================================
-# TAB 1: DAILY PICKS
+# TAB 1: DAILY PICKS & HUNTER MODE
 # ==========================================================
 with tab_daily:
-    st.header("Today's Match Fixtures")
-    st.write("Fetch today's matches via API-Football and analyze them with AI.")
-    
-    # Use Session State to prevent data loss when clicking "Analyze"
+    st.header("Match Hunter")
+    st.write("Fetch matches, pull real team stats via **LiveScore MCP**, and use AI to hunt for Under 1.5 edges.")
+
+    hunter_mode = st.toggle("🎯 Low Score Hunter (Under 1.5 Goals)", value=True)
+
     if "fixtures" not in st.session_state:
         st.session_state.fixtures = None
+        st.session_state.hunted_matches = []
 
     today_str = datetime.now(timezone.utc).strftime('%Y-%m-%d')
-    
-    if st.button("Fetch Today's Matches", type="primary"):
-        with st.spinner("Fetching fixtures..."):
-            url = f"https://v3.football.api-sports.io/fixtures?date={today_str}"
-            headers = {'x-apisports-key': FOOTBALL_API_KEY}
-            
-            try:
-                response = requests.get(url, headers=headers)
-                data = response.json()
-                
-                if 'errors' in data and data['errors']:
-                    st.error(f"API Error: {data['errors']}")
-                elif data.get('response'):
-                    st.session_state.fixtures = data['response']
-                    st.success(f"Found {len(st.session_state.fixtures)} matches today.")
-                else:
-                    st.warning("No matches found for today.")
-            except Exception as e:
-                st.error(f"Failed to connect to API: {e}")
 
-    # Display fixtures from session state
-    if st.session_state.fixtures:
-        for fixture in st.session_state.fixtures[:20]: # Show first 20 to avoid clutter
-            home = fixture['teams']['home']['name']
-            away = fixture['teams']['away']['name']
-            league = fixture['league']['name']
-            time_str = fixture['fixture']['date']
+    if st.button("Fetch & Analyze Matches", type="primary"):
+        with st.spinner("Fetching fixtures from LiveScore MCP..."):
+            # We use the MCP get_day_fixtures tool inside the async function
+            async def get_fixtures():
+                async with streamablehttp_client(MCP_URL) as (read_stream, write_stream, _):
+                    async with ClientSession(read_stream, write_stream) as session:
+                        await session.initialize()
+                        res = await session.call_tool("get_day_fixtures", {"date": today_str})
+                        return json.loads(res.content[0].text)
+
+            try:
+                fixtures_data = asyncio.run(get_fixtures())
+                if fixtures_data and "fixtures" in fixtures_data:
+                    st.session_state.fixtures = fixtures_data["fixtures"]
+                    st.success(f"Fetched {len(st.session_state.fixtures)} matches today.")
+                else:
+                    st.warning("No fixtures found for today.")
+            except Exception as e:
+                st.error(f"MCP Fixture Error: {e}")
+
+    if hunter_mode and st.session_state.fixtures:
+        if st.button("Run Under 1.5 Hunter"):
+            st.session_state.hunted_matches = []
+            matches_to_scan = st.session_state.fixtures[:15] # Limit to 15 to respect 30 req/min rate limit
+            progress_bar = st.progress(0)
+
+            for i, fixture in enumerate(matches_to_scan):
+                home = fixture['teams']['home']['name']
+                away = fixture['teams']['away']['name']
+                league = fixture['league']['name']
+
+                # Fetch stats via MCP
+                home_stats = fetch_team_stats(home)
+                away_stats = fetch_team_stats(away)
+
+                if home_stats and away_stats:
+                    under_prob = calculate_under_1_5_probability(
+                        home_stats['avg_for'], home_stats['avg_against'],
+                        away_stats['avg_for'], away_stats['avg_against']
+                    )
+
+                    if under_prob > 0.55:
+                        prompt = f"""
+                        The mathematical model suggests a {under_prob:.1%} chance of Under 1.5 goals for {home} vs {away} in {league}.
+                        Based on these stats, provide a short, sharp confirmation (YES or NO) and a 1-sentence reason.
+                        """
+                        chat_completion = groq_client.chat.completions.create(
+                            messages=[{"role": "user", "content": prompt}],
+                            model=MODEL,
+                            temperature=0.1
+                        )
+                        ai_response = chat_completion.choices[0].message.content
+
+                        if "YES" in ai_response.upper():
+                            st.session_state.hunted_matches.append({
+                                "home": home,
+                                "away": away,
+                                "league": league,
+                                "prob": under_prob,
+                                "analysis": ai_response
+                            })
+                
+                progress_bar.progress((i + 1) / len(matches_to_scan))
             
-            with st.expander(f"⚽ {home} vs {away} ({league})"):
-                st.write(f"**Kickoff:** {time_str}")
-                if st.button(f"Analyze {home} vs {away}", key=fixture['fixture']['id']):
-                    with st.spinner("AI is analyzing..."):
-                        prompt = f"Analyze this football match for betting: {home} vs {away} in {league}. Provide a short, sharp betting recommendation (1X2 or Over/Under) and a brief reason based on standard team stats."
-                        try:
-                            chat_completion = groq_client.chat.completions.create(
-                                messages=[{"role": "user", "content": prompt}],
-                                model=MODEL,
-                            )
-                            st.info(chat_completion.choices[0].message.content)
-                        except Exception as e:
-                            st.error(f"AI Error: {e}")
+            st.success(f"Hunter scan complete! Found {len(st.session_state.hunted_matches)} potential matches.")
+
+    if st.session_state.hunted_matches:
+        st.subheader("🎯 High Probability Under 1.5 Matches")
+        for item in st.session_state.hunted_matches:
+            with st.expander(f"⚽ {item['home']} vs {item['away']} ({item['league']})"):
+                st.write(f"**Math Probability:** {item['prob']:.1%}")
+                st.info(item['analysis'])
 
 # ==========================================================
 # TAB 2: MANUAL BETTOR (OCR + Analysis)
 # ==========================================================
 with tab_manual:
     st.header("Manual Bet Analysis")
+    uploaded_file = st.file_uploader("Upload Bet Slip", type=["png", "jpg", "jpeg"])
     
-    col1, col2 = st.columns([1, 1])
-    
-    with col1:
-        uploaded_file = st.file_uploader("Upload Bet Slip", type=["png", "jpg", "jpeg"])
-        if uploaded_file:
-            image = Image.open(uploaded_file)
-            # Updated use_container_width
-            st.image(image, caption="Uploaded Slip", use_container_width=True)
-            
-            if st.button("Extract Text (OCR)"):
-                with st.spinner("Scanning image..."):
-                    result, _ = ocr_engine(np.array(image))
-                    extracted_text = " ".join([item[1] for item in result]) if result else "No text found."
-                    st.session_state['ocr_text'] = extracted_text
-                    st.success("Extraction complete!")
+    if uploaded_file:
+        image = Image.open(uploaded_file)
+        st.image(image, caption="Uploaded Slip", use_container_width=True)
 
-    with col2:
-        st.subheader("Analysis")
-        default_text = st.session_state.get('ocr_text', "")
-        bet_details = st.text_area("Extracted/Manual Bet Details:", value=default_text, height=150)
-        
-        if st.button("Run AI Analysis", type="primary"):
-            if not bet_details:
-                st.warning("Please upload an image or enter bet details.")
-            else:
-                with st.spinner("Consulting Groq AI..."):
-                    prompt = f"Audit this bet slip and provide a sharp betting analysis. Are there better alternatives?\n\nDetails:\n{bet_details}"
-                    try:
-                        chat_completion = groq_client.chat.completions.create(
-                            messages=[{"role": "user", "content": prompt}],
-                            model=MODEL,
-                        )
-                        st.success("Analysis Complete")
-                        st.info(chat_completion.choices[0].message.content)
-                    except Exception as e:
-                        st.error(f"AI Error: {e}")
+        if st.button("Extract & Analyze"):
+            with st.spinner("Scanning image and analyzing..."):
+                result, _ = ocr_engine(np.array(image))
+                extracted_text = " ".join([item[1] for item in result]) if result else "No text found."
+                
+                prompt = f"Audit this bet slip and provide a sharp betting analysis. Are there better alternatives?\n\nDetails:\n{extracted_text}"
+                chat_completion = groq_client.chat.completions.create(
+                    messages=[{"role": "user", "content": prompt}],
+                    model=MODEL
+                )
+                st.info(chat_completion.choices[0].message.content)
 
 # ==========================================================
 # TAB 3: AUDITOR
 # ==========================================================
 with tab_auditor:
     st.header("Performance Auditor")
-    st.info("⚠️ Note: `GOOGLE_SHEET_URL` must be a published CSV link for this to read data.")
-    
     if st.button("Fetch History from Google Sheets"):
         with st.spinner("Loading data..."):
             try:
-                # Ensure the URL ends in /export?format=csv or is a published CSV link
                 df = pd.read_csv(GOOGLE_SHEET_URL)
                 st.dataframe(df, use_container_width=True)
-                
                 if 'Result' in df.columns:
-                    # Simple safe string matching for wins
                     wins = len(df[df['Result'].astype(str).str.lower() == 'win'])
                     total = len(df)
                     if total > 0:
                         st.metric("Win Rate", f"{(wins/total)*100:.1f}%")
-                    else:
-                        st.warning("No data found to calculate win rate.")
             except Exception as e:
                 st.error(f"Failed to load Google Sheet: {e}")
-                st.write("Make sure your Google Sheet is shared as 'Anyone with the link can view' and published to the web as a CSV.")
 
 # ==========================================================
 # TAB 4: SETTINGS
@@ -197,12 +267,7 @@ with tab_auditor:
 with tab_settings:
     st.header("System Settings")
     st.success("✅ Groq API Connected")
-    st.success("✅ API-Football Connected")
-    st.success("✅ Google Sheets URL Configured")
-    
-    st.write("**Active Model:**", MODEL)
-    st.write("**League Avg Goals:**", LEAGUE_AVG_GOALS)
-    st.write("**Min Matches:**", MIN_MATCHES)
+    st.success("✅ LiveScore MCP Connected (Rate Limit: 30 req/min)")
     
     if st.button("Clear App Cache"):
         st.cache_resource.clear()
