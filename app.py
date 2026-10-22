@@ -240,15 +240,17 @@ with tab2:
         
         if response.status_code == 200:
             data = response.json()
-            if data:
-                df = pd.DataFrame(data)
+            if data and len(data) > 1:
+                headers = data[0]
+                rows = data[1:]
+                df = pd.DataFrame(rows, columns=headers)
                 
-                # Clean and format DataFrame
                 if 'Result' not in df.columns: df['Result'] = ''
                 if 'Profit' not in df.columns: df['Profit'] = 0.0
-                df['Profit'] = pd.to_numeric(df['Profit'], errors='coerce').fillna(0)
                 
-                # Performance Metrics
+                df['Profit'] = pd.to_numeric(df['Profit'], errors='coerce').fillna(0)
+                df['Odds'] = pd.to_numeric(df['Odds'], errors='coerce').fillna(0)
+                
                 total_bets = len(df)
                 settled_bets = len(df[df['Result'].isin(['Win', 'Loss'])])
                 wins = len(df[df['Result'] == 'Win'])
@@ -279,12 +281,10 @@ with tab2:
                             if btn_col1.button("✅ Win", key=f"win_{index}"):
                                 try: profit = float(row['Odds']) - 1.0
                                 except: profit = 0.0
-                                # Send update request to Apps Script
-                                requests.post(GOOGLE_SHEET_URL, json={"action": "update", "rowNum": str(index + 2), "result": "Win", "profit": profit})
+                                requests.post(GOOGLE_SHEET_URL, json={"action": "u", "rowNum": str(index + 2), "result": "Win", "profit": profit})
                                 st.rerun()
                             if btn_col2.button("❌ Loss", key=f"loss_{index}"):
-                                # Send update request to Apps Script
-                                requests.post(GOOGLE_SHEET_URL, json={"action": "update", "rowNum": str(index + 2), "result": "Loss", "profit": -1.0})
+                                requests.post(GOOGLE_SHEET_URL, json={"action": "u", "rowNum": str(index + 2), "result": "Loss", "profit": -1.0})
                                 st.rerun()
                                 
                 st.write("---")
@@ -293,7 +293,7 @@ with tab2:
             else:
                 st.info("No data yet. Scan a screenshot to get started.")
         else:
-            st.error(f"Failed to fetch data from Apps Script. Status: {response.status_code}")
+            st.error(f"Failed to fetch data. Status: {response.status_code}")
             
     except Exception as e:
         st.error(f"Error loading tracker: {e}")
