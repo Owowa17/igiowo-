@@ -13,13 +13,13 @@ from dotenv import load_dotenv
 from scipy.stats import poisson
 
 # ==========================================================
-# MCP IMPORTS (SSE Client)
+# MCP IMPORTS (Streamable HTTP)
 # ==========================================================
 try:
-    from mcp.client.sse import sse_client
+    from mcp.client.streamable_http import streamablehttp_client
     from mcp import ClientSession
 except ImportError:
-    st.error("❌ MCP SSE client not found. Please ensure 'mcp' is in requirements.txt.")
+    st.error("❌ MCP Streamable HTTP client not found. Please ensure 'mcp>=1.8.0' is in requirements.txt.")
     st.stop()
 
 # ==========================================================
@@ -41,7 +41,7 @@ if not all([GOOGLE_SHEET_URL, GROQ_API_KEY]):
     st.stop()
 
 MODEL = "llama3-8b-8192"
-MCP_SSE_URL = "https://livescoremcp.com/sse" # Correct SSE Endpoint
+MCP_URL = "https://livescoremcp.com/mcp"
 
 # ==========================================================
 # POISSON PROBABILITY FUNCTION
@@ -56,11 +56,11 @@ def calculate_under_1_5_probability(home_avg_goals_for, home_avg_goals_against, 
     return (prob_home_0 * prob_away_0) + (prob_home_1 * prob_away_0) + (prob_home_0 * prob_away_1)
 
 # ==========================================================
-# LIVE SCORE MCP INTEGRATION (SSE)
+# LIVE SCORE MCP INTEGRATION
 # ==========================================================
 async def fetch_team_stats_mcp_async(team_name):
     try:
-        async with sse_client(MCP_SSE_URL) as (read_stream, write_stream):
+        async with streamablehttp_client(MCP_URL) as (read_stream, write_stream, _):
             async with ClientSession(read_stream, write_stream) as session:
                 await session.initialize()
                 # Search for team
@@ -76,7 +76,6 @@ async def fetch_team_stats_mcp_async(team_name):
                 team_result = await session.call_tool("get_team", {"team_id": team_id})
                 team_data = json.loads(team_result.content[0].text)
                 
-                # Extract stats (adjust keys if needed based on actual MCP response)
                 stats = team_data.get("statistics", team_data)
                 goals_for = stats.get("goals_for", stats.get("goals_scored", 0))
                 goals_against = stats.get("goals_against", stats.get("goals_conceded", 0))
@@ -139,18 +138,19 @@ with tab_daily:
         st.session_state.fixtures = None
         st.session_state.hunted_matches = []
 
-    # CORRECT DATE FORMAT FOR MCP: DD/MM/YYYY
-    today_str = datetime.now(timezone.utc).strftime('%d/%m/%Y')
+    # Date and Timezone for MCP
+    today_str = datetime.now(timezone.utc).strftime('%Y-%m-%d')
+    timezone_str = "UTC"
 
     if st.button("Fetch & Analyze Matches", type="primary"):
-        with st.spinner("Fetching fixtures from LiveScore MCP via SSE..."):
+        with st.spinner("Fetching fixtures from LiveScore MCP via Streamable HTTP..."):
             async def get_fixtures():
                 try:
-                    async with sse_client(MCP_SSE_URL) as (read_stream, write_stream):
+                    async with streamablehttp_client(MCP_URL) as (read_stream, write_stream, _):
                         async with ClientSession(read_stream, write_stream) as session:
                             await session.initialize()
-                            # Call get_day_fixtures with correct date format
-                            res = await session.call_tool("get_day_fixtures", {"date": today_str})
+                            # Add timezone parameter
+                            res = await session.call_tool("get_day_fixtures", {"date": today_str, "timezone": timezone_str, "format": "json"})
                             return json.loads(res.content[0].text)
                 except Exception as e:
                     st.error(f"Underlying MCP Error: {type(e).__name__} - {str(e)}")
@@ -265,7 +265,7 @@ with tab_auditor:
 with tab_settings:
     st.header("System Settings")
     st.success("✅ Groq API Connected")
-    st.success("✅ LiveScore MCP (SSE) Connected")
+    st.success("✅ LiveScore MCP (Streamable HTTP) Connected")
     
     if st.button("Clear App Cache"):
         st.cache_resource.clear()
