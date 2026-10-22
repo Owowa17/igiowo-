@@ -58,23 +58,17 @@ def fetch_fixtures(league_slug):
             if not isinstance(match, dict):
                 continue
                 
-            # Safely navigate the nested JSON structure
             model_preds = match.get("model_predictions") or {}
             dc_v2 = model_preds.get("dc_v2") or {}
             raw = dc_v2.get("raw") or {}
             
-            # Skip matches that don't have predictions generated yet
             if not raw:
                 continue
             
-            # 1. HT Under 1.5 Probability
             ht_over = raw.get("ht_over_1_5") or raw.get("ht_over_15")
             ht_under = 1.0 - float(ht_over) if ht_over is not None else 0.5
             
-            # 2. BTTS Probability
             btts_prob = float(raw.get("btts", 0.5))
-            
-            # 3. Full-Time Under 2.5 Probability
             ft_under_25 = float(raw.get("under_2_5", 0.5))
             
             fixtures.append({
@@ -122,29 +116,38 @@ with tab_daily:
     st.header("Match Hunter: HALF-TIME Under 1.5 goals")
     st.caption("Filter by HT Under 1.5 probability, BTTS, and Under 2.5 to find the safest picks.")
     
+    # 🔴 NEW: Dropdown + Custom Text Input
     league_options = {
         "Premier League": "premier",
-        "La Liga": "laliga",
-        "Bundesliga": "bundesliga",
-        "Serie A": "seriea",
-        "Ligue 1": "ligue1",
-        "Eredivisie": "eredivisie"
+        "La Liga (Spain)": "spain/laliga",
+        "Bundesliga (Germany)": "germany/bundesliga",
+        "Serie A (Italy)": "italy/serie-a",
+        "Ligue 1 (France)": "france/ligue-1",
+        "Eredivisie (Netherlands)": "netherlands/eredivisie",
+        "Custom Slug...": "custom"
     }
     
-    selected_league_name = st.selectbox("Select a League", list(league_options.keys()))
-    league_slug = league_options[selected_league_name]
+    selected_name = st.selectbox("Select a League", list(league_options.keys()))
+    
+    if selected_name == "Custom Slug...":
+        league_slug = st.text_input("Enter Custom League Slug (e.g., 'england/championship')", "")
+    else:
+        league_slug = league_options[selected_name]
     
     if st.button("📥 Fetch Fixtures", type="primary"):
-        with st.spinner("Fetching from Football-Charts..."):
-            fixtures, err = fetch_fixtures(league_slug)
-            
-        if err:
-            st.error(err)
-        elif not fixtures:
-            st.warning("No upcoming fixtures with predictions found for this league.")
+        if not league_slug:
+            st.error("Please provide a league slug.")
         else:
-            st.session_state.fixtures = fixtures
-            st.success(f"Loaded {len(fixtures)} fixtures with predictions from {selected_league_name}.")
+            with st.spinner(f"Fetching from Football-Charts for '{league_slug}'..."):
+                fixtures, err = fetch_fixtures(league_slug)
+                
+            if err:
+                st.error(err)
+            elif not fixtures:
+                st.warning(f"No upcoming fixtures with predictions found for '{league_slug}'. Try a different slug.")
+            else:
+                st.session_state.fixtures = fixtures
+                st.success(f"Loaded {len(fixtures)} fixtures from '{league_slug}'.")
 
     # Display Results with Multi-Filters
     if "fixtures" in st.session_state and st.session_state.fixtures:
@@ -233,7 +236,7 @@ with tab_auditor:
                 st.error(f"Failed to load Google Sheet: {e}")
 
 # ---------------------------------------------------------- TAB 4
-with tab_settings:
+with st.settings:
     st.header("Settings & Diagnostics")
     
     if st.button("Clear App Cache"):
