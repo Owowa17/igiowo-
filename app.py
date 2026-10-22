@@ -13,18 +13,14 @@ from dotenv import load_dotenv
 from scipy.stats import poisson
 
 # ==========================================================
-# ROBUST MCP IMPORTS (Handles different SDK versions)
+# MCP IMPORTS (SSE Client)
 # ==========================================================
 try:
-    from mcp.client.streamable_http import streamablehttp_client
+    from mcp.client.sse import sse_client
     from mcp import ClientSession
 except ImportError:
-    try:
-        from mcp.client.streamablehttp import streamablehttp_client
-        from mcp import ClientSession
-    except ImportError:
-        from mcp.client.streamable_http import streamable_http_client as streamablehttp_client
-        from mcp import ClientSession
+    st.error("❌ MCP SSE client not found. Please ensure 'mcp' is in requirements.txt.")
+    st.stop()
 
 # ==========================================================
 # SECRETS & CONSTANTS
@@ -45,7 +41,7 @@ if not all([GOOGLE_SHEET_URL, GROQ_API_KEY]):
     st.stop()
 
 MODEL = "llama3-8b-8192"
-MCP_URL = "https://livescoremcp.com/mcp"
+MCP_SSE_URL = "https://livescoremcp.com/sse" # Correct SSE Endpoint
 
 # ==========================================================
 # POISSON PROBABILITY FUNCTION
@@ -53,27 +49,21 @@ MCP_URL = "https://livescoremcp.com/mcp"
 def calculate_under_1_5_probability(home_avg_goals_for, home_avg_goals_against, away_avg_goals_for, away_avg_goals_against):
     home_lambda = (home_avg_goals_for + away_avg_goals_against) / 2
     away_lambda = (away_avg_goals_for + home_avg_goals_against) / 2
-
     prob_home_0 = poisson.pmf(0, home_lambda)
     prob_home_1 = poisson.pmf(1, home_lambda)
     prob_away_0 = poisson.pmf(0, away_lambda)
     prob_away_1 = poisson.pmf(1, away_lambda)
-
-    prob_0_0 = prob_home_0 * prob_away_0
-    prob_1_0 = prob_home_1 * prob_away_0
-    prob_0_1 = prob_home_0 * prob_away_1
-
-    return prob_0_0 + prob_1_0 + prob_0_1
+    return (prob_home_0 * prob_away_0) + (prob_home_1 * prob_away_0) + (prob_home_0 * prob_away_1)
 
 # ==========================================================
-# LIVE SCORE MCP INTEGRATION
+# LIVE SCORE MCP INTEGRATION (SSE)
 # ==========================================================
 async def fetch_team_stats_mcp_async(team_name):
     try:
-        async with streamablehttp_client(MCP_URL) as (read_stream, write_stream, _):
+        async with sse_client(MCP_SSE_URL) as (read_stream, write_stream):
             async with ClientSession(read_stream, write_stream) as session:
                 await session.initialize()
-
+                # Search for team
                 search_result = await session.call_tool("search", {"query": team_name})
                 search_data = json.loads(search_result.content[0].text)
                 
@@ -81,12 +71,13 @@ async def fetch_team_stats_mcp_async(team_name):
                     return None
                 
                 team_id = search_data["teams"][0]["id"]
-
+                
+                # Get team details
                 team_result = await session.call_tool("get_team", {"team_id": team_id})
                 team_data = json.loads(team_result.content[0].text)
                 
+                # Extract stats (adjust keys if needed based on actual MCP response)
                 stats = team_data.get("statistics", team_data)
-                
                 goals_for = stats.get("goals_for", stats.get("goals_scored", 0))
                 goals_against = stats.get("goals_against", stats.get("goals_conceded", 0))
                 matches_played = stats.get("matches_played", stats.get("games", 1))
@@ -100,7 +91,8 @@ async def fetch_team_stats_mcp_async(team_name):
                     "matches": matches_played,
                     "name": search_data["teams"][0]["name"]
                 }
-    except Exception:
+    except Exception as e:
+        st.error(f"Team Stats Error for {team_name}: {type(e).__name__} - {e}")
         return None
 
 def fetch_team_stats(team_name):
@@ -147,16 +139,18 @@ with tab_daily:
         st.session_state.fixtures = None
         st.session_state.hunted_matches = []
 
-    today_str = datetime.now(timezone.utc).strftime('%Y-%m-%d')
+    # CORRECT DATE FORMAT FOR MCP: DD/MM/YYYY
+    today_str = datetime.now(timezone.utc).strftime('%d/%m/%Y')
 
     if st.button("Fetch & Analyze Matches", type="primary"):
-        with st.spinner("Fetching fixtures from LiveScore MCP..."):
+        with st.spinner("Fetching fixtures from LiveScore MCP via SSE..."):
             async def get_fixtures():
                 try:
-                    async with streamablehttp_client(MCP_URL) as (read_stream, write_stream, _):
+                    async with sse_client(MCP_SSE_URL) as (read_stream, write_stream):
                         async with ClientSession(read_stream, write_stream) as session:
                             await session.initialize()
-                            res = await session.call_tool("get_day_fixtures", {"date": today_str, "format": "json"})
+                            # Call get_day_fixtures with correct date format
+                            res = await session.call_tool("get_day_fixtures", {"date": today_str})
                             return json.loads(res.content[0].text)
                 except Exception as e:
                     st.error(f"Underlying MCP Error: {type(e).__name__} - {str(e)}")
@@ -271,7 +265,7 @@ with tab_auditor:
 with tab_settings:
     st.header("System Settings")
     st.success("✅ Groq API Connected")
-    st.success("✅ LiveScore MCP Connected (Rate Limit: 30 req/min)")
+    st.success("✅ LiveScore MCP (SSE) Connected")
     
     if st.button("Clear App Cache"):
         st.cache_resource.clear()
