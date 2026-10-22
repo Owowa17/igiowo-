@@ -81,9 +81,13 @@ def lenient_json(text):
     t = (text or "").strip()
     if not t:
         return None, "empty response"
-    starts = [i for i in (t.find("{"), t.find("[")) if i != -1]
+    
+    idx_brace = t.find("{")
+    idx_bracket = t.find("[")
+    starts = [i for i in (idx_brace, idx_bracket) if i != -1]
+    
     if not starts:
-        return None, f"no JSON found"
+        return None, "no JSON found"
     t = t[min(starts):]
     try:
         obj, _ = json.JSONDecoder(strict=False).raw_decode(t)
@@ -134,20 +138,30 @@ def parse_fixture(fx):
     if not isinstance(fx, dict):
         return None
     f = {re.sub(r"[^a-z0-9]", "", str(k).lower()): v for k, v in flat_items(fx).items()}
-    nm = lambda v: isinstance(v, str) and v.strip() and not v.strip().isdigit()
-    home, away = _first(f, NAME_H, nm), _first(f, NAME_A, nm)
-    hs, as_ = _first(f, SC_H, _intlike), _first(f, SC_A, _intlike)
+    
+    def is_name(v): return isinstance(v, str) and v.strip() and not v.strip().isdigit()
+    
+    home = _first(f, NAME_H, is_name)
+    away = _first(f, NAME_A, is_name)
+    hs = _first(f, SC_H, _intlike)
+    as_ = _first(f, SC_A, _intlike)
+    
     if hs is None or as_ is None:
-        comb = _first(f, SC_COMBINED, lambda v: isinstance(v, str) and re.fullmatch(r"\s*\d+\s*[-:–]\s*\d+\s*", v) is not None)
+        def is_score_str(v): return isinstance(v, str) and re.fullmatch(r"\s*\d+\s*[-:–]\s*\d+\s*", v) is not None
+        comb = _first(f, SC_COMBINED, is_score_str)
         if comb:
-            hs, as_ = re.split(r"[-:–]", comb.strip())[:2]
+            parts = re.split(r"[-:–]", comb.strip())
+            hs, as_ = parts[0], parts[1]
+            
     hs = int(float(hs)) if hs is not None and _intlike(hs) else None
     as_ = int(float(as_)) if as_ is not None and _intlike(as_) else None
+    
     status = None
     for k, v in f.items():
         if re.match(r"^(status|state|statustext|matchstatus|st)$", k) and isinstance(v, str):
             status = v.strip()
             break
+            
     date = None
     for k, v in f.items():
         if re.search(r"date|kickoff|timestamp|utc", k) and isinstance(v, (str, int, float)):
@@ -155,15 +169,27 @@ def parse_fixture(fx):
             if pd.notna(d):
                 date = d
                 break
+                
     if status is not None:
         s = status.lower()
         finished = s in DONE or s.startswith("ft")
     else:
         finished = hs is not None and as_ is not None and date is not None and date < pd.Timestamp.now(tz="UTC")
+        
     tm = _first(f, re.compile(r"^time$"), lambda v: isinstance(v, str))
-    return {"home": home.strip() if home else None, "away": away.strip() if away else None, "hs": hs, "as_": as_,
-            "finished": finished, "status": status, "date": date, "time": tm or "",
-            "home_id": _first(f, ID_H), "away_id": _first(f, ID_A)}
+    
+    return {
+        "home": home.strip() if home else None, 
+        "away": away.strip() if away else None, 
+        "hs": hs, 
+        "as_": as_,
+        "finished": finished, 
+        "status": status, 
+        "date": date, 
+        "time": tm or "",
+        "home_id": _first(f, ID_H), 
+        "away_id": _first(f, ID_A)
+    }
 
 def collect_fixtures(obj, league=""):
     if isinstance(obj, dict):
@@ -201,8 +227,12 @@ def games_from_team_obj(team_obj, search_name):
         if max(sh, sa) < 0.6:
             continue
         is_home = sh >= sa
-        games.append({"date": m["date"], "home": is_home,
-                      "gf": m["hs"] if is_home else m["as_"], "ga": m["as_"] if is_home else m["hs"]})
+        games.append({
+            "date": m["date"], 
+            "home": is_home,
+            "gf": m["hs"] if is_home else m["as_"], 
+            "ga": m["as_"] if is_home else m["hs"]
+        })
     return games, canon
 
 def form_from_games(games, name):
@@ -214,24 +244,33 @@ def form_from_games(games, name):
         w = [1.0] * n
 
     def wavg(vals, ws):
-        return sum(v * x for v, x in zip(vals, ws)) / sum(ws) if ws else 0.0
+        if not ws: return 0.0
+        return sum(v * x for v, x in zip(vals, ws)) / sum(ws)
 
     def agg(idx):
-        return (wavg([games[i]["gf"] for i in idx], [w[i] for i in idx]),
-                wavg([games[i]["ga"] for i in idx], [w[i] for i in idx]), len(idx))
+        return (
+            wavg([games[i]["gf"] for i in idx], [w[i] for i in idx]),
+            wavg([games[i]["ga"] for i in idx], [w[i] for i in idx]), 
+            len(idx)
+        )
 
     allx = list(range(n))
     hx = [i for i in allx if games[i]["home"]]
     ax = [i for i in allx if not games[i]["home"]]
+    
     att, dfn, _ = agg(allx)
     ah, dh, nh = agg(hx)
     aa, da, na = agg(ax)
+    
     last5 = games[-5:]
-    return {"name": name, "n": n, "att": att, "def": dfn, "n_home": nh, "att_home": ah, "def_home": dh,
-            "n_away": na, "att_away": aa, "def_away": da,
-            "form": "".join("W" if g["gf"] > g["ga"] else "D" if g["gf"] == g["ga"] else "L" for g in last5),
-            "over25": sum(1 for g in games if g["gf"] + g["ga"] > 2.5) / n,
-            "btts": sum(1 for g in games if g["gf"] > 0 and g["ga"] > 0) / n}
+    return {
+        "name": name, "n": n, "att": att, "def": dfn, 
+        "n_home": nh, "att_home": ah, "def_home": dh,
+        "n_away": na, "att_away": aa, "def_away": da,
+        "form": "".join("W" if g["gf"] > g["ga"] else "D" if g["gf"] == g["ga"] else "L" for g in last5),
+        "over25": sum(1 for g in games if g["gf"] + g["ga"] > 2.5) / n,
+        "btts": sum(1 for g in games if g["gf"] > 0 and g["ga"] > 0) / n
+    }
 
 def pick_team_id(sobj, name):
     bad = ("player", "competition", "league", "tournament", "cup", "coach", "referee", "venue", "stadium")
@@ -461,8 +500,14 @@ with tab_daily:
                 for m in collect_fixtures(obj):
                     if m["finished"] or _EXCLUDE.search(f"{m.get('league','')} {m['home']} {m['away']}"):
                         continue
-                    fixtures.append({"team1": m["home"], "team2": m["away"], "league": m.get("league") or "Unknown",
-                                     "time": m["time"], "id1": m["home_id"], "id2": m["away_id"]})
+                    fixtures.append({
+                        "team1": m["home"], 
+                        "team2": m["away"], 
+                        "league": m.get("league") or "Unknown",
+                        "time": m["time"], 
+                        "id1": m["home_id"], 
+                        "id2": m["away_id"]
+                    })
             
             if not fixtures:
                 st.warning(f"Could not read fixtures directly. Falling back to AI parsing.")
@@ -474,9 +519,17 @@ Return ONLY a JSON array of objects with keys "time", "league", "team1" (home), 
 {raw[:9000]}
 """
                     arr, e2 = lenient_json(llm(prompt, max_tokens=4000))
-                    fixtures = [{"team1": x.get("team1"), "team2": x.get("team2"), "league": x.get("league", "Unknown"),
-                                 "time": x.get("time", ""), "id1": None, "id2": None}
-                                for x in (arr or []) if isinstance(x, dict) and x.get("team1") and x.get("team2")]
+                    fixtures = []
+                    for x in (arr or []):
+                        if isinstance(x, dict) and x.get("team1") and x.get("team2"):
+                            fixtures.append({
+                                "team1": x.get("team1"), 
+                                "team2": x.get("team2"), 
+                                "league": x.get("league", "Unknown"),
+                                "time": x.get("time", ""), 
+                                "id1": None, 
+                                "id2": None
+                            })
                 except Exception as e:
                     st.error(f"AI parse failed: {e}")
             
@@ -500,21 +553,4 @@ Return ONLY a JSON array of objects with keys "time", "league", "team1" (home), 
         
         pool = [fx for k in chosen for fx in labels[k]]
         c1, c2 = st.columns(2)
-        max_m = c1.slider("Max matches", 1, 30, 10)
-        thr = c2.slider("Candidate if Under 1.5 chance ≥ %", 20, 70, 40) / 100
-        use_comment = st.checkbox("AI commentary (uses the numbers only)", value=True)
-
-        if st.button("🚀 Run Under 1.5 Hunter") and pool:
-            scan = pool[:max_m]
-            teams = []
-            for fx in scan:
-                teams += [(fx["team1"], fx["id1"]), (fx["team2"], fx["id2"])]
-            
-            with st.spinner(f"Reading form for {len(set(n for n, _ in teams))} teams..."):
-                forms = get_forms(teams)
-            
-            rows, skipped = [], []
-            for fx in scan:
-                (f1, e1), (f2, e2) = forms[fx["team1"]], forms[fx["team2"]]
-                if not (f1 and f2):
-                    skipped.append((fx, "; ".joi
+        max_m = c1.sl
