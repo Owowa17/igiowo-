@@ -11,8 +11,20 @@ from groq import Groq
 from datetime import datetime, timezone
 from dotenv import load_dotenv
 from scipy.stats import poisson
-from mcp import ClientSession
-from mcp.client.streamable_http import streamablehttp_client
+
+# ==========================================================
+# ROBUST MCP IMPORTS (Handles different SDK versions)
+# ==========================================================
+try:
+    from mcp.client.streamable_http import streamablehttp_client
+    from mcp import ClientSession
+except ImportError:
+    try:
+        from mcp.client.streamablehttp import streamablehttp_client
+        from mcp import ClientSession
+    except ImportError:
+        from mcp.client.streamable_http import streamable_http_client as streamablehttp_client
+        from mcp import ClientSession
 
 # ==========================================================
 # SECRETS & CONSTANTS
@@ -27,7 +39,6 @@ def get_secret(key):
 
 GOOGLE_SHEET_URL = get_secret("GOOGLE_SHEET_URL")
 GROQ_API_KEY = get_secret("GROQ_API_KEY")
-FOOTBALL_API_KEY = get_secret("FOOTBALL_API_KEY") # Kept for fallback if needed
 
 if not all([GOOGLE_SHEET_URL, GROQ_API_KEY]):
     st.error("⚠️ Missing Secrets! Please check your Streamlit Secrets configuration.")
@@ -58,13 +69,11 @@ def calculate_under_1_5_probability(home_avg_goals_for, home_avg_goals_against, 
 # LIVE SCORE MCP INTEGRATION
 # ==========================================================
 async def fetch_team_stats_mcp_async(team_name):
-    """Fetches team stats using LiveScore MCP Streamable HTTP transport."""
     try:
         async with streamablehttp_client(MCP_URL) as (read_stream, write_stream, _):
             async with ClientSession(read_stream, write_stream) as session:
                 await session.initialize()
 
-                # 1. Search for the team to get its ID
                 search_result = await session.call_tool("search", {"query": team_name})
                 search_data = json.loads(search_result.content[0].text)
                 
@@ -73,12 +82,9 @@ async def fetch_team_stats_mcp_async(team_name):
                 
                 team_id = search_data["teams"][0]["id"]
 
-                # 2. Fetch team details
                 team_result = await session.call_tool("get_team", {"team_id": team_id})
                 team_data = json.loads(team_result.content[0].text)
-
-                # 3. Extract statistics (flexible parsing as exact schema may vary)
-                # We look for common keys that represent goals and matches
+                
                 stats = team_data.get("statistics", team_data)
                 
                 goals_for = stats.get("goals_for", stats.get("goals_scored", 0))
@@ -94,17 +100,13 @@ async def fetch_team_stats_mcp_async(team_name):
                     "matches": matches_played,
                     "name": search_data["teams"][0]["name"]
                 }
-    except Exception as e:
-        # Fallback or silent fail
+    except Exception:
         return None
 
 def fetch_team_stats(team_name):
-    """Synchronous wrapper for Streamlit."""
     try:
         return asyncio.run(fetch_team_stats_mcp_async(team_name))
     except RuntimeError:
-        # If asyncio.run fails due to an existing event loop in Streamlit,
-        # use a new event loop.
         loop = asyncio.new_event_loop()
         asyncio.set_event_loop(loop)
         return loop.run_until_complete(fetch_team_stats_mcp_async(team_name))
@@ -149,7 +151,6 @@ with tab_daily:
 
     if st.button("Fetch & Analyze Matches", type="primary"):
         with st.spinner("Fetching fixtures from LiveScore MCP..."):
-            # We use the MCP get_day_fixtures tool inside the async function
             async def get_fixtures():
                 async with streamablehttp_client(MCP_URL) as (read_stream, write_stream, _):
                     async with ClientSession(read_stream, write_stream) as session:
@@ -170,7 +171,7 @@ with tab_daily:
     if hunter_mode and st.session_state.fixtures:
         if st.button("Run Under 1.5 Hunter"):
             st.session_state.hunted_matches = []
-            matches_to_scan = st.session_state.fixtures[:15] # Limit to 15 to respect 30 req/min rate limit
+            matches_to_scan = st.session_state.fixtures[:15]
             progress_bar = st.progress(0)
 
             for i, fixture in enumerate(matches_to_scan):
@@ -178,7 +179,6 @@ with tab_daily:
                 away = fixture['teams']['away']['name']
                 league = fixture['league']['name']
 
-                # Fetch stats via MCP
                 home_stats = fetch_team_stats(home)
                 away_stats = fetch_team_stats(away)
 
