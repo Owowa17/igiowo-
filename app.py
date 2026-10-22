@@ -116,7 +116,6 @@ with tab_daily:
     st.header("Match Hunter: HALF-TIME Under 1.5 goals")
     st.caption("Filter by HT Under 1.5 probability, BTTS, and Under 2.5 to find the safest picks.")
     
-    # 🔴 NEW: Dropdown + Custom Text Input
     league_options = {
         "Premier League": "premier",
         "La Liga (Spain)": "spain/laliga",
@@ -236,7 +235,7 @@ with tab_auditor:
                 st.error(f"Failed to load Google Sheet: {e}")
 
 # ---------------------------------------------------------- TAB 4
-with st.settings:
+with tab_settings:  # 🔴 FIXED: Changed from st.settings to tab_settings
     st.header("Settings & Diagnostics")
     
     if st.button("Clear App Cache"):
