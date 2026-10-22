@@ -14,6 +14,7 @@ from PIL import Image
 from rapidocr_onnxruntime import RapidOCR
 from groq import Groq
 from datetime import datetime, timezone, timedelta
+from dotenv import load_dotenv
 
 st.set_page_config(page_title="AI Sharp Bettor", page_icon="📈", layout="wide")
 
@@ -30,7 +31,6 @@ except ImportError:
 # ==========================================================
 # SECRETS & CONSTANTS
 # ==========================================================
-from dotenv import load_dotenv
 load_dotenv()
 
 def get_secret(key):
@@ -46,16 +46,16 @@ if not all([GOOGLE_SHEET_URL, GROQ_API_KEY]):
     st.error("⚠️ Missing Secrets! Please check your Streamlit Secrets configuration.")
     st.stop()
 
-MODEL = "llama-3.1-8b-instant" # Using a stable Groq model
+MODEL = "llama-3.1-8b-instant"
 MCP_SSE_URL = "https://livescoremcp.com/sse"
 LEAGUE_AVG_GOALS = 1.35
-MIN_MATCHES = 5          # finished matches needed per team before the model is trusted
-DC_RHO = -0.08           # Dixon-Coles low-score correction
-MARGIN_BUFFER = 0.07     # extra edge demanded over fair odds (no market price to compare)
+MIN_MATCHES = 5
+DC_RHO = -0.08
+MARGIN_BUFFER = 0.07
 FORM_TTL = 6 * 3600
 
 # ==========================================================
-# PURE LOGIC (no Streamlit, no network)
+# PURE LOGIC
 # ==========================================================
 _STOP = {"fc", "afc", "cf", "sc", "ac", "club", "de", "the", "cd", "fk", "sk", "gnk", "tc"}
 
@@ -78,22 +78,20 @@ def unwrap_error(e):
     return e
 
 def lenient_json(text):
-    """Parse the first JSON value in text. Tolerates leading/trailing text and control characters."""
     t = (text or "").strip()
     if not t:
         return None, "empty response"
     starts = [i for i in (t.find("{"), t.find("[")) if i != -1]
     if not starts:
-        return None, f"no JSON found; starts with {t[:80]!r}"
+        return None, f"no JSON found"
     t = t[min(starts):]
     try:
         obj, _ = json.JSONDecoder(strict=False).raw_decode(t)
         return obj, None
     except json.JSONDecodeError as e:
-        return None, f"JSON error at char {e.pos} of {len(t)} ({e.msg}); ends with ...{t[-60:]!r}"
+        return None, f"JSON error: {e.msg}"
 
 def tool_text(res):
-    """Join ALL text blocks of an MCP tool result."""
     return "".join(getattr(c, "text", "") or "" for c in (getattr(res, "content", None) or []))
 
 def flat_items(d, prefix="", depth=0):
@@ -133,7 +131,6 @@ def _first(f, pat, cond=lambda v: True):
     return None
 
 def parse_fixture(fx):
-    """Schema-tolerant fixture parser."""
     if not isinstance(fx, dict):
         return None
     f = {re.sub(r"[^a-z0-9]", "", str(k).lower()): v for k, v in flat_items(fx).items()}
@@ -169,7 +166,6 @@ def parse_fixture(fx):
             "home_id": _first(f, ID_H), "away_id": _first(f, ID_A)}
 
 def collect_fixtures(obj, league=""):
-    """Walk any JSON and collect fixture-like dicts."""
     if isinstance(obj, dict):
         pf = parse_fixture(obj)
         if pf and pf["home"] and pf["away"]:
@@ -302,7 +298,6 @@ def first_fixture_sample(obj):
     s = find(obj)
     return json.dumps(s, ensure_ascii=False)[:500] if s else "no 'fixtures' list found"
 
-# ---- goals model (Poisson grid + Dixon-Coles) ----
 def _pois(k, lam):
     return math.exp(-lam) * lam ** k / math.factorial(k)
 
@@ -389,8 +384,7 @@ async def fetch_form_async(session, name, known_id=None):
         return None, f"get_team: {err}"
     games, canon = games_from_team_obj(tobj, name)
     if len(games) < MIN_MATCHES:
-        return None, (f"only {len(games)} finished matches could be read from the team data (need {MIN_MATCHES}). "
-                      f"Fixture sample: {first_fixture_sample(tobj)}")
+        return None, f"only {len(games)} finished matches could be read (need {MIN_MATCHES})"
     return form_from_games(games, canon or name), None
 
 def get_forms(team_list):
@@ -417,7 +411,7 @@ def get_forms(team_list):
     return {n: (cache[n][0], cache[n][1]) for n, _ in team_list}
 
 # ==========================================================
-# CLIENTS
+# CLIENTS & UI
 # ==========================================================
 @st.cache_resource
 def init_clients():
@@ -427,13 +421,14 @@ groq_client, ocr_engine = init_clients()
 
 def llm(prompt, temperature=0.1, max_tokens=None):
     kw = {"max_tokens": max_tokens} if max_tokens else {}
-    r = groq_client.chat.completions.create(model=MODEL, messages=[{"role": "user", "content": prompt}],
-                                            temperature=temperature, **kw)
+    r = groq_client.chat.completions.create(
+        model=MODEL, 
+        messages=[{"role": "user", "content": prompt}],
+        temperature=temperature, 
+        **kw
+    )
     return r.choices[0].message.content
 
-# ==========================================================
-# UI
-# ==========================================================
 st.title("📈 AI Sharp Bettor & Auditor")
 tab_daily, tab_manual, tab_auditor, tab_settings = st.tabs(
     ["🎯 Hunter & Daily Picks", "📸 Manual Bettor", "🔍 Auditor", "⚙️ Settings & Inspector"])
@@ -441,7 +436,7 @@ tab_daily, tab_manual, tab_auditor, tab_settings = st.tabs(
 # ---------------------------------------------------------- TAB 1
 with tab_daily:
     st.header("Match Hunter: FULL-TIME Under 1.5 goals")
-    st.caption("Team form is read from LiveScore MCP. The maths decides; the AI only comments. Odds aren't available here, so confirm SportyBet's price against 'Min odds to bet'.")
+    st.caption("Team form is read from LiveScore MCP. The maths decides; the AI only comments.")
 
     if "fixtures" not in st.session_state:
         st.session_state.fixtures = None
@@ -454,12 +449,13 @@ with tab_daily:
 
         with st.spinner("Fetching fixtures from LiveScore MCP..."):
             raw, err = run_mcp(get_day, timeout=30)
+        
         if err:
             st.error(f"MCP connection failed: {err}")
         elif not raw:
             st.warning("No fixtures returned for today.")
         else:
-            obj, jerr = lenient_json(raw) # 🔴 FIX: Added missing obj parsing
+            obj, jerr = lenient_json(raw)
             fixtures = []
             if obj is not None:
                 for m in collect_fixtures(obj):
@@ -467,28 +463,58 @@ with tab_daily:
                         continue
                     fixtures.append({"team1": m["home"], "team2": m["away"], "league": m.get("league") or "Unknown",
                                      "time": m["time"], "id1": m["home_id"], "id2": m["away_id"]})
+            
             if not fixtures:
-                st.warning(f"Could not read fixtures directly ({jerr or 'unknown layout'}). Falling back to AI parsing.")
+                st.warning(f"Could not read fixtures directly. Falling back to AI parsing.")
                 try:
-                    prompt = f"""Extract the upcoming football matches from this text. Only the FIRST 25 matches.
+                    prompt = f"""
+Extract the upcoming football matches from this text. Only the FIRST 25 matches.
 Return ONLY a JSON array of objects with keys "time", "league", "team1" (home), "team2" (away).
 
-{raw[:9000]}"""
+{raw[:9000]}
+"""
                     arr, e2 = lenient_json(llm(prompt, max_tokens=4000))
                     fixtures = [{"team1": x.get("team1"), "team2": x.get("team2"), "league": x.get("league", "Unknown"),
                                  "time": x.get("time", ""), "id1": None, "id2": None}
                                 for x in (arr or []) if isinstance(x, dict) and x.get("team1") and x.get("team2")]
                 except Exception as e:
                     st.error(f"AI parse failed: {e}")
+            
             st.session_state.fixtures = fixtures
             if fixtures:
                 st.success(f"Loaded {len(fixtures)} upcoming matches.")
             else:
-                st.error("No usable fixtures found. Open Settings & Inspector.")
+                st.error("No usable fixtures found.")
 
     fixtures = st.session_state.fixtures
     if fixtures:
         labels = {}
         for fx in fixtures:
             labels.setdefault(fx["league"], []).append(fx)
-        chosen = st.multiselect("Choose leagues to scan", sorted(labels), format_func=lambda k: f"{k} ({len(l
+        
+        # 🔴 FIX: Formatted multi-line to prevent mobile breakage
+        chosen = st.multiselect(
+            "Choose leagues to scan", 
+            sorted(labels), 
+            format_func=lambda k: f"{k} ({len(labels[k])})"
+        )
+        
+        pool = [fx for k in chosen for fx in labels[k]]
+        c1, c2 = st.columns(2)
+        max_m = c1.slider("Max matches", 1, 30, 10)
+        thr = c2.slider("Candidate if Under 1.5 chance ≥ %", 20, 70, 40) / 100
+        use_comment = st.checkbox("AI commentary (uses the numbers only)", value=True)
+
+        if st.button("🚀 Run Under 1.5 Hunter") and pool:
+            scan = pool[:max_m]
+            teams = []
+            for fx in scan:
+                teams += [(fx["team1"], fx["id1"]), (fx["team2"], fx["id2"])]
+            
+            with st.spinner(f"Reading form for {len(set(n for n, _ in teams))} teams..."):
+                forms = get_forms(teams)
+            
+            rows, skipped = [], []
+            for fx in scan:
+                (f1, e1), (f2, e2) = forms[fx["team1"]], forms[fx["team2"]]
+                if not (f1 and f2):
