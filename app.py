@@ -102,15 +102,17 @@ def fetch_fixtures(league_key):
             ft_over_25 = preds.get("over_2.5")
             ft_under_25_prob = (1.0 - float(ft_over_25)) if ft_over_25 is not None else 0.5
             
-            fixtures.append({
-                "team1": match.get("home_team", "Unknown"),
-                "team2": match.get("away_team", "Unknown"),
-                "league": league_key,
-                "time": match.get("time", ""),
-                "ht_under_prob": ht_under_prob,
-                "btts_prob": btts_prob,
-                "ft_under_25_prob": ft_under_25_prob
-            })
+            # 🔴 FIXED INDENTATION: Only add the fixture if real predictions exist
+            if ht_under_prob != 0.5:
+                fixtures.append({
+                    "team1": match.get("home_team", "Unknown"),
+                    "team2": match.get("away_team", "Unknown"),
+                    "league": league_key,
+                    "time": match.get("time", ""),
+                    "ht_under_prob": ht_under_prob,
+                    "btts_prob": btts_prob,
+                    "ft_under_25_prob": ft_under_25_prob
+                })
             
         return fixtures, None
     except Exception as e:
