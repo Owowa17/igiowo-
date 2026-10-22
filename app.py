@@ -492,7 +492,6 @@ Return ONLY a JSON array of objects with keys "time", "league", "team1" (home), 
         for fx in fixtures:
             labels.setdefault(fx["league"], []).append(fx)
         
-        # 🔴 FIX: Formatted multi-line to prevent mobile breakage
         chosen = st.multiselect(
             "Choose leagues to scan", 
             sorted(labels), 
@@ -518,3 +517,4 @@ Return ONLY a JSON array of objects with keys "time", "league", "team1" (home), 
             for fx in scan:
                 (f1, e1), (f2, e2) = forms[fx["team1"]], forms[fx["team2"]]
                 if not (f1 and f2):
+                    skipped.append((fx, "; ".joi
