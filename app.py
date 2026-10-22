@@ -69,7 +69,7 @@ def unwrap_error(e):
     return e
 
 # ==========================================================
-# LIVE SCORE MCP INTEGRATION (FIXED)
+# LIVE SCORE MCP INTEGRATION (FIXED: format="json")
 # ==========================================================
 async def fetch_team_stats_mcp_async(team_name):
     try:
@@ -87,10 +87,8 @@ async def fetch_team_stats_mcp_async(team_name):
                     team_id = None
                     try:
                         search_data = json.loads(search_text)
-                        # Check if results are empty
                         if isinstance(search_data, dict) and "results" in search_data:
                             if len(search_data["results"]) == 0:
-                                # Fallback: try cleaning the name (remove FC, GNK, etc.)
                                 clean_name = re.sub(r'\b(FC|GNK|FK|SC|TC)\b', '', team_name, flags=re.IGNORECASE).strip()
                                 if clean_name != team_name:
                                     return await fetch_team_stats_mcp_async(clean_name)
@@ -107,8 +105,8 @@ async def fetch_team_stats_mcp_async(team_name):
                     if not team_id:
                         return {"error": f"Team ID not found. Raw search: {search_text[:50]}"}
                     
-                    # 2. Get Team Stats (🔴 FIX: Use "id" instead of "team_id")
-                    team_result = await session.call_tool("get_team", {"id": team_id})
+                    # 2. Get Team Stats (🔴 FIX: Added format="json")
+                    team_result = await session.call_tool("get_team", {"id": team_id, "format": "json"})
                     team_text = team_result.content[0].text if team_result.content else ""
                     if not team_text:
                         return {"error": "Empty team result"}
