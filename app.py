@@ -150,24 +150,29 @@ with tab_daily:
     today_str = datetime.now(timezone.utc).strftime('%Y-%m-%d')
 
     if st.button("Fetch & Analyze Matches", type="primary"):
-        with st.spinner("Fetching fixtures from LiveScore MCP..."):
-            async def get_fixtures():
+    with st.spinner("Fetching fixtures from LiveScore MCP..."):
+        async def get_fixtures():
+            try:
                 async with streamablehttp_client(MCP_URL) as (read_stream, write_stream, _):
                     async with ClientSession(read_stream, write_stream) as session:
                         await session.initialize()
-                        res = await session.call_tool("get_day_fixtures", {"date": today_str})
+                        # Use format="json" to ensure we get structured data
+                        res = await session.call_tool("get_day_fixtures", {"date": today_str, "format": "json"})
                         return json.loads(res.content[0].text)
-
-            try:
-                fixtures_data = asyncio.run(get_fixtures())
-                if fixtures_data and "fixtures" in fixtures_data:
-                    st.session_state.fixtures = fixtures_data["fixtures"]
-                    st.success(f"Fetched {len(st.session_state.fixtures)} matches today.")
-                else:
-                    st.warning("No fixtures found for today.")
             except Exception as e:
-                st.error(f"MCP Fixture Error: {e}")
+                # Print the actual underlying error
+                st.error(f"Underlying MCP Error: {type(e).__name__} - {str(e)}")
+                return None
 
+        try:
+            fixtures_data = asyncio.run(get_fixtures())
+            if fixtures_data and "fixtures" in fixtures_data:
+                st.session_state.fixtures = fixtures_data["fixtures"]
+                st.success(f"Fetched {len(st.session_state.fixtures)} matches today.")
+            elif fixtures_data is not None:
+                st.warning("No fixtures found for today (API returned empty).")
+        except Exception as e:
+            st.error(f"Outer Error: {e}")
     if hunter_mode and st.session_state.fixtures:
         if st.button("Run Under 1.5 Hunter"):
             st.session_state.hunted_matches = []
