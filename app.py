@@ -44,7 +44,7 @@ if not all([GOOGLE_SHEET_URL, GROQ_API_KEY]):
     st.error("⚠️ Missing Secrets! Please check your Streamlit Secrets configuration.")
     st.stop()
 
-MODEL = "llama3-8b-8192"
+MODEL = "MODEL = "openai/gpt-oss-20b"
 MCP_SSE_URL = "https://livescoremcp.com/sse"
 
 # ==========================================================
