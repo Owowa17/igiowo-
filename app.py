@@ -1,6 +1,7 @@
 import streamlit as st
 import requests
 import os
+import re
 import numpy as np
 import pandas as pd
 import asyncio
@@ -82,13 +83,10 @@ async def fetch_team_stats_mcp_async(team_name):
                     if not search_text:
                         return None
                         
-                    # Try to parse JSON. If it fails, it might be Markdown.
                     try:
                         search_data = json.loads(search_text)
                         team_id = search_data["teams"][0]["id"]
                     except (json.JSONDecodeError, KeyError, IndexError):
-                        # Fallback: try to extract ID using regex from Markdown
-                        import re
                         match = re.search(r'id[:\s]+(\d+)', search_text, re.IGNORECASE)
                         if match:
                             team_id = match.group(1)
@@ -166,69 +164,68 @@ with tab_daily:
     today_str = datetime.now(timezone.utc).strftime('%d/%m/%Y')
 
     if st.button("Fetch & Analyze Matches", type="primary"):
-    with st.spinner("Fetching fixtures from LiveScore MCP..."):
-        async def get_fixtures():
-            try:
-                async with asyncio.timeout(20):
-                    async with sse_client(MCP_SSE_URL) as (read_stream, write_stream):
-                        async with ClientSession(read_stream, write_stream) as session:
-                            await session.initialize()
-                            res = await session.call_tool("get_day_fixtures", {"date": today_str})
-                            if not res.content:
-                                return None
-                            return res.content[0].text
-            except Exception as e:
-                real_err = unwrap_error(e)
-                st.error(f"MCP Connection Failed: {type(real_err).__name__} - {real_err}")
-                return None
+        # 🔴 FIXED INDENTATION HERE
+        with st.spinner("Fetching fixtures from LiveScore MCP..."):
+            async def get_fixtures():
+                try:
+                    async with asyncio.timeout(20):
+                        async with sse_client(MCP_SSE_URL) as (read_stream, write_stream):
+                            async with ClientSession(read_stream, write_stream) as session:
+                                await session.initialize()
+                                res = await session.call_tool("get_day_fixtures", {"date": today_str})
+                                if not res.content:
+                                    return None
+                                return res.content[0].text
+                except Exception as e:
+                    real_err = unwrap_error(e)
+                    st.error(f"MCP Connection Failed: {type(real_err).__name__} - {real_err}")
+                    return None
 
-        try:
-            raw_text = asyncio.run(get_fixtures())
-            if raw_text:
-                with st.spinner("AI is parsing the match list..."):
-                    # 🔴 FIX 1: Tell the AI to only return 20 matches
-                    prompt = f"""
-                    Extract the upcoming football matches from this text. 
-                    Only extract the FIRST 20 matches you find. Do not try to extract all of them.
-                    
-                    Return a JSON array of objects. Each object must have exactly these keys:
-                    - "time": The match time (e.g., "16:45")
-                    - "league": The league name (e.g., "UEFA Europa League")
-                    - "team1": The home team
-                    - "team2": The away team
-                    
-                    Text to parse:
-                    {raw_text[:6000]} 
-                    
-                    Return ONLY valid JSON. Do not include markdown or conversational text.
-                    """
-                    chat_completion = groq_client.chat.completions.create(
-                        messages=[{"role": "user", "content": prompt}],
-                        model=MODEL,
-                        temperature=0.1,
-                        max_tokens=4000 # 🔴 FIX 2: Give the AI more tokens to finish the JSON
-                    )
-                    content = chat_completion.choices[0].message.content
-                    
-                    # Extract the JSON array from the AI response
-                    start = content.find('[')
-                    end = content.rfind(']')
-                    
-                    if start != -1 and end != -1:
-                        try:
-                            fixtures_data = json.loads(content[start:end+1])
-                            st.session_state.fixtures = fixtures_data
-                            st.success(f"Fetched and parsed {len(st.session_state.fixtures)} matches today.")
-                        except json.JSONDecodeError:
-                            st.error("AI generated invalid JSON. Please try again.")
+            try:
+                raw_text = asyncio.run(get_fixtures())
+                if raw_text:
+                    with st.spinner("AI is parsing the match list..."):
+                        prompt = f"""
+                        Extract the upcoming football matches from this text. 
+                        Only extract the FIRST 20 matches you find. Do not try to extract all of them.
+                        
+                        Return a JSON array of objects. Each object must have exactly these keys:
+                        - "time": The match time (e.g., "16:45")
+                        - "league": The league name (e.g., "UEFA Europa League")
+                        - "team1": The home team
+                        - "team2": The away team
+                        
+                        Text to parse:
+                        {raw_text[:6000]} 
+                        
+                        Return ONLY valid JSON. Do not include markdown or conversational text.
+                        """
+                        chat_completion = groq_client.chat.completions.create(
+                            messages=[{"role": "user", "content": prompt}],
+                            model=MODEL,
+                            temperature=0.1,
+                            max_tokens=4000
+                        )
+                        content = chat_completion.choices[0].message.content
+                        
+                        start = content.find('[')
+                        end = content.rfind(']')
+                        
+                        if start != -1 and end != -1:
+                            try:
+                                fixtures_data = json.loads(content[start:end+1])
+                                st.session_state.fixtures = fixtures_data
+                                st.success(f"Fetched and parsed {len(st.session_state.fixtures)} matches today.")
+                            except json.JSONDecodeError:
+                                st.error("AI generated invalid JSON. Please try again.")
+                                st.text(content)
+                        else:
+                            st.error("AI failed to parse fixtures into JSON.")
                             st.text(content)
-                    else:
-                        st.error("AI failed to parse fixtures into JSON.")
-                        st.text(content)
-            elif raw_text is not None:
-                st.warning("No fixtures found for today (API returned empty).")
-        except Exception as e:
-            st.error(f"Outer Error: {e}")
+                elif raw_text is not None:
+                    st.warning("No fixtures found for today (API returned empty).")
+            except Exception as e:
+                st.error(f"Outer Error: {e}")
 
     if hunter_mode and st.session_state.fixtures:
         if st.button("Run Under 1.5 Hunter"):
@@ -237,7 +234,6 @@ with tab_daily:
             progress_bar = st.progress(0)
 
             for i, fixture in enumerate(matches_to_scan):
-                # 🔴 FIX 2: Use the keys Groq actually generated
                 home = fixture.get('team1', 'Unknown')
                 away = fixture.get('team2', 'Unknown')
                 league = fixture.get('league', 'Unknown')
