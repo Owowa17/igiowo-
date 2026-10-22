@@ -9,3 +9,4 @@ pillow
 mcp
 scipy
 numpy
+mcp>=1.8.0
