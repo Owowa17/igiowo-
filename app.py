@@ -51,23 +51,32 @@ def fetch_fixtures(league_slug):
             return None, f"API Error {r.status_code}: {r.text[:100]}"
             
         data = r.json()
-        matches = []
+        matches = data.get("matches", [])
         
-        for match in data.get("matches", []):
-            # Football-Charts provides HT Over 1.5 probability directly
-            ht_over_15 = match.get("probabilities", {}).get("ht_over_1_5", 0.5)
-            # We want HT Under 1.5
-            ht_under_15 = 1.0 - ht_over_15
+        if matches:
+            # 🔴 DEBUG: Print the first match to see the exact keys
+            st.write("🔍 **Debug: Raw API Response for First Match:**")
+            st.json(matches[0])
+        
+        fixtures = []
+        for match in matches:
+            # Try multiple possible key names for the probability
+            probs = match.get("probabilities", {})
+            ht_over = probs.get("ht_over_1_5") or probs.get("ht_over_15") or probs.get("over_1_5_ht") or 0.5
+            ht_under = 1.0 - float(ht_over)
             
-            matches.append({
+            # Try multiple possible key names for time
+            time_val = match.get("kickoff") or match.get("time") or match.get("date") or ""
+            
+            fixtures.append({
                 "team1": match.get("home_team", "Unknown"),
                 "team2": match.get("away_team", "Unknown"),
                 "league": league_slug,
-                "time": match.get("kickoff", ""),
-                "ht_under_prob": ht_under_15
+                "time": time_val,
+                "ht_under_prob": ht_under
             })
             
-        return matches, None
+        return fixtures, None
     except Exception as e:
         return None, f"Exception: {str(e)}"
 
