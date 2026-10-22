@@ -17,13 +17,13 @@ from scipy.stats import poisson
 nest_asyncio.apply()
 
 # ==========================================================
-# MCP IMPORTS (Streamable HTTP)
+# MCP IMPORTS (SSE Client)
 # ==========================================================
 try:
-    from mcp.client.streamable_http import streamablehttp_client
+    from mcp.client.sse import sse_client
     from mcp import ClientSession
 except ImportError:
-    st.error("❌ MCP Streamable HTTP client not found. Please ensure 'mcp>=1.8.0,<2' is in requirements.txt.")
+    st.error("❌ MCP SSE client not found. Please ensure 'mcp>=1.8.0,<2' is in requirements.txt.")
     st.stop()
 
 # ==========================================================
@@ -45,7 +45,8 @@ if not all([GOOGLE_SHEET_URL, GROQ_API_KEY]):
     st.stop()
 
 MODEL = "llama3-8b-8192"
-MCP_URL = "https://livescoremcp.com/mcp"
+# Using the official SSE endpoint
+MCP_SSE_URL = "https://livescoremcp.com/sse"
 
 # ==========================================================
 # POISSON PROBABILITY FUNCTION
@@ -60,13 +61,21 @@ def calculate_under_1_5_probability(home_avg_goals_for, home_avg_goals_against, 
     return (prob_home_0 * prob_away_0) + (prob_home_1 * prob_away_0) + (prob_home_0 * prob_away_1)
 
 # ==========================================================
-# LIVE SCORE MCP INTEGRATION
+# ERROR UNWRAPPER (Reveals the real connection issue)
+# ==========================================================
+def unwrap_error(e):
+    """Recursively finds the real exception inside an ExceptionGroup."""
+    if hasattr(e, 'exceptions') and e.exceptions:
+        return unwrap_error(e.exceptions[0])
+    return e
+
+# ==========================================================
+# LIVE SCORE MCP INTEGRATION (SSE)
 # ==========================================================
 async def fetch_team_stats_mcp_async(team_name):
     try:
-        # Add timeout to prevent hanging
         async with asyncio.timeout(15):
-            async with streamablehttp_client(MCP_URL) as (read_stream, write_stream, _):
+            async with sse_client(MCP_SSE_URL) as (read_stream, write_stream):
                 async with ClientSession(read_stream, write_stream) as session:
                     await session.initialize()
                     
@@ -95,7 +104,6 @@ async def fetch_team_stats_mcp_async(team_name):
                         "name": search_data["teams"][0]["name"]
                     }
     except Exception as e:
-        # Suppress individual team errors so the scan doesn't stop entirely
         return None
 
 def fetch_team_stats(team_name):
@@ -141,25 +149,20 @@ with tab_daily:
         st.session_state.hunted_matches = []
 
     today_str = datetime.now(timezone.utc).strftime('%Y-%m-%d')
-    timezone_str = "UTC"
 
     if st.button("Fetch & Analyze Matches", type="primary"):
-        with st.spinner("Fetching fixtures from LiveScore MCP via Streamable HTTP..."):
+        with st.spinner("Fetching fixtures from LiveScore MCP via SSE..."):
             async def get_fixtures():
                 try:
-                    async with asyncio.timeout(20): # 20-second timeout
-                        async with streamablehttp_client(MCP_URL) as (read_stream, write_stream, _):
+                    async with asyncio.timeout(20):
+                        async with sse_client(MCP_SSE_URL) as (read_stream, write_stream):
                             async with ClientSession(read_stream, write_stream) as session:
                                 await session.initialize()
-                                res = await session.call_tool("get_day_fixtures", {"date": today_str, "timezone": timezone_str, "format": "json"})
+                                res = await session.call_tool("get_day_fixtures", {"date": today_str, "timezone": "UTC"})
                                 return json.loads(res.content[0].text)
                 except Exception as e:
-                    # Unwrap anyio ExceptionGroup to show real error
-                    if hasattr(e, 'exceptions') and e.exceptions:
-                        real_err = e.exceptions[0]
-                        st.error(f"MCP Connection Failed: {type(real_err).__name__} - {real_err}")
-                    else:
-                        st.error(f"MCP Connection Failed: {type(e).__name__} - {e}")
+                    real_err = unwrap_error(e)
+                    st.error(f"MCP Connection Failed: {type(real_err).__name__} - {real_err}")
                     return None
 
             try:
@@ -271,7 +274,7 @@ with tab_auditor:
 with tab_settings:
     st.header("System Settings")
     st.success("✅ Groq API Connected")
-    st.success("✅ LiveScore MCP (Streamable HTTP) Connected")
+    st.success("✅ LiveScore MCP (SSE) Connected")
     
     if st.button("Clear App Cache"):
         st.cache_resource.clear()
