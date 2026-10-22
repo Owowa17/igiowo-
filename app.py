@@ -41,23 +41,41 @@ BASE_URL = "https://footballcharts-backend.onrender.com/api/v1"
 def get_headers():
     return {"Authorization": f"Bearer {FC_API_KEY}"}
 
-@st.cache_data(ttl=86400) # Cache league list for 24 hours
+@st.cache_data(ttl=86400)
 def fetch_leagues():
-    """Fetches the list of all available leagues and their keys."""
+    """Fetches all available leagues and handles any JSON structure."""
     try:
         url = f"{BASE_URL}/leagues/"
         r = requests.get(url, headers=get_headers(), timeout=15)
         r.raise_for_status()
         data = r.json()
         
-        # Build a dictionary of {display_name: league_key}
         leagues = {}
-        for league in data:
-            # Adjust these keys based on the actual API response structure
-            name = league.get("name", "Unknown")
-            key = league.get("key") or league.get("slug")
-            if key:
-                leagues[name] = key
+        
+        # Handle if wrapped in a "leagues" or "data" key
+        if isinstance(data, dict):
+            if "leagues" in data: data = data["leagues"]
+            elif "data" in data: data = data["data"]
+            elif all(isinstance(v, str) for v in data.values()):
+                # If the dict itself is the mapping
+                return data, None
+                
+        if isinstance(data, list):
+            for item in data:
+                if isinstance(item, dict):
+                    name = item.get("name") or item.get("league_name") or item.get("real_league_name") or item.get("display_name")
+                    key = item.get("key") or item.get("slug") or item.get("id") or item.get("league_key")
+                    if name and key:
+                        leagues[name] = str(key)
+                    elif key:
+                        leagues[str(key).title()] = str(key)
+                elif isinstance(item, str):
+                    # Just a list of strings
+                    leagues[item.replace("-", " ").title()] = item
+                    
+        if not leagues:
+            return {}, f"Could not parse leagues. Raw response: {str(data)[:100]}"
+            
         return leagues, None
     except Exception as e:
         return {}, f"Failed to fetch leagues: {str(e)}"
@@ -141,31 +159,36 @@ with tab_daily:
     with st.spinner("Loading available leagues..."):
         league_map, league_err = fetch_leagues()
     
+    use_manual = False
     if league_err:
-        st.error(league_err)
-        st.stop()
+        st.warning(f"Dynamic league fetch failed: {league_err}. Falling back to manual input.")
+        use_manual = True
+    elif not league_map:
+        st.warning("No leagues found from the API. Falling back to manual input.")
+        use_manual = True
         
-    if not league_map:
-        st.warning("No leagues found from the API.")
-        st.stop()
-        
-    # 2. Let the user select a league by name
-    selected_league_name = st.selectbox("Select a League", sorted(league_map.keys()))
-    league_key = league_map[selected_league_name]
-    
-    st.info(f"Selected League Key: `{league_key}`")
+    # 2. League Selection
+    if not use_manual:
+        selected_league_name = st.selectbox("Select a League", sorted(league_map.keys()))
+        league_key = league_map[selected_league_name]
+        st.info(f"Selected League Key: `{league_key}`")
+    else:
+        league_key = st.text_input("Enter League Key manually (e.g., 'premier', 'spain1')", "premier")
     
     if st.button("📥 Fetch Fixtures", type="primary"):
-        with st.spinner(f"Fetching from Football-Charts for '{selected_league_name}'..."):
-            fixtures, err = fetch_fixtures(league_key)
-            
-        if err:
-            st.error(err)
-        elif not fixtures:
-            st.warning(f"No upcoming fixtures with predictions found for '{selected_league_name}'. Try another league.")
+        if not league_key:
+            st.error("Please provide a league key.")
         else:
-            st.session_state.fixtures = fixtures
-            st.success(f"Loaded {len(fixtures)} fixtures from '{selected_league_name}'.")
+            with st.spinner(f"Fetching from Football-Charts for '{league_key}'..."):
+                fixtures, err = fetch_fixtures(league_key)
+                
+            if err:
+                st.error(err)
+            elif not fixtures:
+                st.warning(f"No upcoming fixtures with predictions found for '{league_key}'. Try another league.")
+            else:
+                st.session_state.fixtures = fixtures
+                st.success(f"Loaded {len(fixtures)} fixtures from '{league_key}'.")
 
     # Display Results with Multi-Filters
     if "fixtures" in st.session_state and st.session_state.fixtures:
