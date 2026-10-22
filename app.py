@@ -41,6 +41,30 @@ BASE_URL = "https://footballcharts-backend.onrender.com/api/v1"
 def get_headers():
     return {"Authorization": f"Bearer {FC_API_KEY}"}
 
+def find_probability(data, required_keywords):
+    """
+    Recursively searches a dictionary for a value where the key contains all required keywords.
+    Example: find_probability(data, ['ht', 'over', '1.5'])
+    """
+    if isinstance(data, dict):
+        for k, v in data.items():
+            k_lower = str(k).lower()
+            # Check if all keywords are in the key string
+            if all(kw in k_lower for kw in required_keywords):
+                if isinstance(v, (int, float)):
+                    return float(v)
+                elif isinstance(v, str):
+                    try:
+                        return float(v)
+                    except ValueError:
+                        pass
+            # Recurse deeper
+            if isinstance(v, dict):
+                res = find_probability(v, required_keywords)
+                if res is not None:
+                    return res
+    return None
+
 @st.cache_data(ttl=86400)
 def fetch_leagues():
     """Fetches all available leagues and handles the exact API JSON structure."""
@@ -51,7 +75,6 @@ def fetch_leagues():
         data = r.json()
         
         leagues = {}
-        
         if isinstance(data, dict) and "leagues" in data:
             data = data["leagues"]
             
@@ -60,7 +83,6 @@ def fetch_leagues():
                 if isinstance(item, dict):
                     name = item.get("name")
                     key = item.get("league")
-                    
                     if name and key:
                         country = item.get("country", "")
                         display_name = f"{name} ({country})" if country else name
@@ -68,13 +90,12 @@ def fetch_leagues():
                         
         if not leagues:
             return {}, f"Could not parse leagues. Raw response: {str(data)[:100]}"
-            
         return leagues, None
     except Exception as e:
         return {}, f"Failed to fetch leagues: {str(e)}"
 
 def fetch_fixtures(league_key):
-    """Fetches upcoming fixtures and extracts deep model predictions safely."""
+    """Fetches fixtures and uses a deep search to find predictions."""
     try:
         url = f"{BASE_URL}/leagues/{league_key}/fixtures/"
         r = requests.get(url, headers=get_headers(), timeout=15)
@@ -85,7 +106,6 @@ def fetch_fixtures(league_key):
         data = r.json()
         matches = data.get("matches", [])
         
-        # 🔴 DEBUG: Save the first match to inspect its structure
         if matches:
             st.session_state.raw_fixture = matches[0]
             
@@ -96,15 +116,25 @@ def fetch_fixtures(league_key):
                 continue
                 
             model_preds = match.get("model_predictions") or {}
-            dc_v2 = model_preds.get("dc_v2") or {}
-            raw = dc_v2.get("raw") or {}
             
-            # If no raw predictions exist, still include it but with 0/0.5 defaults
-            ht_over = raw.get("ht_over_1_5") or raw.get("ht_over_15")
-            ht_under = 1.0 - float(ht_over) if ht_over is not None else 0.5
+            # 1. HT Over 1.5 (Try multiple keyword combinations)
+            ht_over = (
+                find_probability(model_preds, ["ht", "over", "1.5"]) or 
+                find_probability(model_preds, ["ht", "over", "15"]) or
+                find_probability(model_preds, ["first", "half", "over"])
+            )
+            ht_under = 1.0 - ht_over if ht_over is not None else 0.5
             
-            btts_prob = float(raw.get("btts", 0.5))
-            ft_under_25 = float(raw.get("under_2_5", 0.5))
+            # 2. BTTS
+            btts = find_probability(model_preds, ["btts"])
+            btts_prob = btts if btts is not None else 0.5
+            
+            # 3. FT Under 2.5
+            ft_under_25 = (
+                find_probability(model_preds, ["under", "2.5"]) or
+                find_probability(model_preds, ["under", "25"])
+            )
+            ft_under_25 = ft_under_25 if ft_under_25 is not None else 0.5
             
             fixtures.append({
                 "team1": match.get("home_team", "Unknown"),
@@ -151,7 +181,6 @@ with tab_daily:
     st.header("Match Hunter: HALF-TIME Under 1.5 goals")
     st.caption("Filter by HT Under 1.5 probability, BTTS, and Under 2.5 to find the safest picks.")
     
-    # 1. Fetch available leagues dynamically
     with st.spinner("Loading available leagues..."):
         league_map, league_err = fetch_leagues()
     
@@ -163,7 +192,6 @@ with tab_daily:
         st.warning("No leagues found from the API. Falling back to manual input.")
         use_manual = True
         
-    # 2. League Selection
     if not use_manual:
         selected_league_name = st.selectbox("Select a League", sorted(league_map.keys()))
         league_key = league_map[selected_league_name]
@@ -186,12 +214,10 @@ with tab_daily:
                 st.session_state.fixtures = fixtures
                 st.success(f"Loaded {len(fixtures)} fixtures from '{league_key}'.")
                 
-                # 🔴 DEBUG: Display the raw JSON of the first match
                 if "raw_fixture" in st.session_state:
                     with st.expander("🛠️ View Raw JSON of First Match (Debug)", expanded=True):
                         st.json(st.session_state.raw_fixture)
 
-    # Display Results with Multi-Filters
     if "fixtures" in st.session_state and st.session_state.fixtures:
         fixtures = st.session_state.fixtures
         
@@ -225,8 +251,6 @@ with tab_daily:
             st.subheader(f"🎯 {len(candidates)} High-Confidence Picks")
             candidates = sorted(candidates, key=lambda x: x["HT Under 1.5 %"], reverse=True)
             st.dataframe(pd.DataFrame(candidates), use_container_width=True, hide_index=True)
-            
-            st.info("💡 **Pro Tip:** If BTTS is very low (< 35%) and HT Under 1.5 is > 50%, this is often a game where one team dominates possession but struggles to score early.")
         else:
             st.warning("No matches met all your filtering criteria. Try loosening the sliders.")
             
