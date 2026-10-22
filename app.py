@@ -69,7 +69,7 @@ def unwrap_error(e):
     return e
 
 # ==========================================================
-# LIVE SCORE MCP INTEGRATION (FIXED: format="json")
+# LIVE SCORE MCP INTEGRATION (FIXED LOGIC)
 # ==========================================================
 async def fetch_team_stats_mcp_async(team_name):
     try:
@@ -89,10 +89,11 @@ async def fetch_team_stats_mcp_async(team_name):
                         search_data = json.loads(search_text)
                         if isinstance(search_data, dict) and "results" in search_data:
                             if len(search_data["results"]) == 0:
+                                # Try cleaning the name
                                 clean_name = re.sub(r'\b(FC|GNK|FK|SC|TC)\b', '', team_name, flags=re.IGNORECASE).strip()
                                 if clean_name != team_name:
                                     return await fetch_team_stats_mcp_async(clean_name)
-                                return {"error": f"Team not found. Raw search: {search_text[:50]}"}
+                                return {"error": f"Team not found. Raw: {search_text[:50]}"}
                             else:
                                 team_id = search_data["results"][0].get("id") or search_data["results"][0].get("team_id")
                         elif "teams" in search_data:
@@ -103,32 +104,71 @@ async def fetch_team_stats_mcp_async(team_name):
                             team_id = match.group(1)
                             
                     if not team_id:
-                        return {"error": f"Team ID not found. Raw search: {search_text[:50]}"}
+                        return {"error": f"Team ID not found. Raw: {search_text[:50]}"}
                     
-                    # 2. Get Team Stats (🔴 FIX: Added format="json")
+                    # 2. Get Team Stats
                     team_result = await session.call_tool("get_team", {"id": team_id, "format": "json"})
                     team_text = team_result.content[0].text if team_result.content else ""
                     if not team_text:
                         return {"error": "Empty team result"}
                         
-                    try:
-                        team_data = json.loads(team_text)
-                        stats = team_data.get("statistics", team_data)
-                        goals_for = stats.get("goals_for", stats.get("goals_scored", 0))
-                        goals_against = stats.get("goals_against", stats.get("goals_conceded", 0))
-                        matches_played = stats.get("matches_played", stats.get("games", 1))
+                    # 🔴 FIX: Extract JSON using regex to strip markdown backticks
+                    json_match = re.search(r'\{.*\}', team_text, re.DOTALL)
+                    if not json_match:
+                        return {"error": f"No JSON block found. Raw: {team_text[:100]}"}
                         
-                        if matches_played == 0:
-                            return {"error": "Matches played is 0"}
-
-                        return {
-                            "avg_for": round(goals_for / matches_played, 2),
-                            "avg_against": round(goals_against / matches_played, 2),
-                            "matches": matches_played,
-                            "name": team_name
-                        }
+                    try:
+                        team_data = json.loads(json_match.group(0))
                     except json.JSONDecodeError:
-                        return {"error": f"Team data is not JSON. Raw text starts with: {team_text[:100]}"}
+                        return {"error": f"JSON decode failed. Raw: {team_text[:100]}"}
+
+                    # 🔴 FIX: Calculate goals manually from the fixtures array
+                    fixtures = team_data.get("fixtures", [])
+                    if not fixtures:
+                        return {"error": "No fixtures array in team data"}
+                        
+                    goals_for = 0
+                    goals_against = 0
+                    matches_played = 0
+                    
+                    for fixture in fixtures:
+                        # We need to check if the match has scores
+                        hg = fixture.get("goalsHome")
+                        ag = fixture.get("goalsAway")
+                        
+                        # Only count finished matches with scores
+                        if hg is None or ag is None:
+                            continue
+                            
+                        try:
+                            hg = int(hg)
+                            ag = int(ag)
+                        except ValueError:
+                            continue
+                            
+                        home_team = str(fixture.get("homeTeam", "")).lower()
+                        away_team = str(fixture.get("awayTeam", "")).lower()
+                        target_team = team_name.lower()
+                        
+                        # Check if this team is home or away
+                        if target_team in home_team or home_team in target_team:
+                            goals_for += hg
+                            goals_against += ag
+                            matches_played += 1
+                        elif target_team in away_team or away_team in target_team:
+                            goals_for += ag
+                            goals_against += hg
+                            matches_played += 1
+                            
+                    if matches_played == 0:
+                        return {"error": "No finished matches with scores found"}
+
+                    return {
+                        "avg_for": round(goals_for / matches_played, 2),
+                        "avg_against": round(goals_against / matches_played, 2),
+                        "matches": matches_played,
+                        "name": team_name
+                    }
                         
     except Exception as e:
         return {"error": f"Exception: {type(e).__name__} - {str(e)}"}
