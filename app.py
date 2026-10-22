@@ -52,7 +52,6 @@ def fetch_leagues():
         
         leagues = {}
         
-        # 🔴 FIX: The API returns a dictionary with a 'leagues' key
         if isinstance(data, dict) and "leagues" in data:
             data = data["leagues"]
             
@@ -85,6 +84,11 @@ def fetch_fixtures(league_key):
             
         data = r.json()
         matches = data.get("matches", [])
+        
+        # 🔴 DEBUG: Save the first match to inspect its structure
+        if matches:
+            st.session_state.raw_fixture = matches[0]
+            
         fixtures = []
         
         for match in matches:
@@ -181,6 +185,11 @@ with tab_daily:
             else:
                 st.session_state.fixtures = fixtures
                 st.success(f"Loaded {len(fixtures)} fixtures from '{league_key}'.")
+                
+                # 🔴 DEBUG: Display the raw JSON of the first match
+                if "raw_fixture" in st.session_state:
+                    with st.expander("🛠️ View Raw JSON of First Match (Debug)", expanded=True):
+                        st.json(st.session_state.raw_fixture)
 
     # Display Results with Multi-Filters
     if "fixtures" in st.session_state and st.session_state.fixtures:
@@ -221,7 +230,6 @@ with tab_daily:
         else:
             st.warning("No matches met all your filtering criteria. Try loosening the sliders.")
             
-        # 🔴 NEW: Show raw data for debugging if filters are too strict
         with st.expander("🛠️ View All Fetched Data (Debug)"):
             raw_df_data = []
             for f in fixtures:
