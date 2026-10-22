@@ -78,11 +78,13 @@ async def fetch_team_stats_mcp_async(team_name):
                 async with ClientSession(read_stream, write_stream) as session:
                     await session.initialize()
                     
+                    # 1. Search for Team
                     search_result = await session.call_tool("search", {"query": team_name})
                     search_text = search_result.content[0].text if search_result.content else ""
                     if not search_text:
-                        return None
+                        return {"error": "Empty search result"}
                         
+                    team_id = None
                     try:
                         search_data = json.loads(search_text)
                         team_id = search_data["teams"][0]["id"]
@@ -90,13 +92,15 @@ async def fetch_team_stats_mcp_async(team_name):
                         match = re.search(r'id[:\s]+(\d+)', search_text, re.IGNORECASE)
                         if match:
                             team_id = match.group(1)
-                        else:
-                            return None
+                            
+                    if not team_id:
+                        return {"error": f"Team ID not found. Raw search: {search_text[:50]}"}
                     
+                    # 2. Get Team Stats
                     team_result = await session.call_tool("get_team", {"team_id": team_id})
                     team_text = team_result.content[0].text if team_result.content else ""
                     if not team_text:
-                        return None
+                        return {"error": "Empty team result"}
                         
                     try:
                         team_data = json.loads(team_text)
@@ -104,20 +108,22 @@ async def fetch_team_stats_mcp_async(team_name):
                         goals_for = stats.get("goals_for", stats.get("goals_scored", 0))
                         goals_against = stats.get("goals_against", stats.get("goals_conceded", 0))
                         matches_played = stats.get("matches_played", stats.get("games", 1))
+                        
+                        if matches_played == 0:
+                            return {"error": "Matches played is 0"}
+
+                        return {
+                            "avg_for": round(goals_for / matches_played, 2),
+                            "avg_against": round(goals_against / matches_played, 2),
+                            "matches": matches_played,
+                            "name": team_name
+                        }
                     except json.JSONDecodeError:
-                        return None
-
-                    if matches_played == 0:
-                        return None
-
-                    return {
-                        "avg_for": round(goals_for / matches_played, 2),
-                        "avg_against": round(goals_against / matches_played, 2),
-                        "matches": matches_played,
-                        "name": team_name
-                    }
-    except Exception:
-        return None
+                        # Fallback if MCP returns Markdown instead of JSON
+                        return {"error": f"Team data is not JSON. Raw text starts with: {team_text[:100]}"}
+                        
+    except Exception as e:
+        return {"error": f"Exception: {type(e).__name__} - {str(e)}"}
 
 def fetch_team_stats(team_name):
     try:
@@ -227,37 +233,40 @@ with tab_daily:
                 st.error(f"Outer Error: {e}")
 
     # ==========================================
-    # UPDATED HUNTER MODE WITH LIVE DEBUGGING
+    # HUNTER MODE WITH LIVE DEBUGGING
     # ==========================================
     if hunter_mode and st.session_state.fixtures:
         if st.button("Run Under 1.5 Hunter"):
             st.session_state.hunted_matches = []
             matches_to_scan = st.session_state.fixtures[:15]
             progress_bar = st.progress(0)
-            debug_container = st.empty() # Live debug output
+            debug_logs = [] 
 
             for i, fixture in enumerate(matches_to_scan):
                 home = fixture.get('team1', 'Unknown')
                 away = fixture.get('team2', 'Unknown')
                 league = fixture.get('league', 'Unknown')
 
-                debug_container.info(f"🔍 Scanning {i+1}/{len(matches_to_scan)}: {home} vs {away}")
-
                 home_stats = fetch_team_stats(home)
                 away_stats = fetch_team_stats(away)
 
-                if not home_stats or not away_stats:
-                    debug_container.warning(f"⚠️ Could not fetch stats for {home} or {away}. Skipping.")
+                # Check for errors in stats fetching
+                if isinstance(home_stats, dict) and "error" in home_stats:
+                    debug_logs.append(f"❌ {home}: {home_stats['error']}")
+                elif isinstance(away_stats, dict) and "error" in away_stats:
+                    debug_logs.append(f"❌ {away}: {away_stats['error']}")
+                elif not home_stats or not away_stats:
+                    debug_logs.append(f"⚠️ Missing stats for {home} or {away}")
                 else:
                     under_prob = calculate_under_1_5_probability(
                         home_stats['avg_for'], home_stats['avg_against'],
                         away_stats['avg_for'], away_stats['avg_against']
                     )
                     
-                    debug_container.info(f"📊 Math Prob for {home} vs {away}: {under_prob:.1%}")
+                    debug_logs.append(f"📊 {home} vs {away}: Math Prob {under_prob:.1%}")
 
-                    # TEMPORARILY LOWERED THRESHOLD TO 0.40 FOR TESTING
-                    if under_prob > 0.40:
+                    # Threshold set to 0.40 for testing purposes
+                    if under_prob > 0.40: 
                         prompt = f"""
                         The mathematical model suggests a {under_prob:.1%} chance of Under 1.5 goals for {home} vs {away} in {league}.
                         Based on these stats, provide a short, sharp confirmation (YES or NO) and a 1-sentence reason.
@@ -277,12 +286,18 @@ with tab_daily:
                                 "prob": under_prob,
                                 "analysis": ai_response
                             })
-                            debug_container.success(f"✅ Found match! {home} vs {away} added to list.")
+                            debug_logs.append(f"✅ Added {home} vs {away} to picks")
+                        else:
+                            debug_logs.append(f"🤖 AI rejected {home} vs {away}")
                 
                 progress_bar.progress((i + 1) / len(matches_to_scan))
             
-            debug_container.empty() # Clear debug text
             st.success(f"Hunter scan complete! Found {len(st.session_state.hunted_matches)} potential matches.")
+            
+            # Display the debug logs
+            with st.expander("🛠️ View Debug Logs (Why did it fail?)", expanded=True):
+                for log in debug_logs:
+                    st.write(log)
 
     if st.session_state.hunted_matches:
         st.subheader("🎯 High Probability Under 1.5 Matches")
