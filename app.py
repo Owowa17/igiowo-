@@ -43,7 +43,7 @@ def get_headers():
 
 @st.cache_data(ttl=86400)
 def fetch_leagues():
-    """Fetches all available leagues and handles the specific API JSON structure."""
+    """Fetches all available leagues and handles the exact API JSON structure."""
     try:
         url = f"{BASE_URL}/leagues/"
         r = requests.get(url, headers=get_headers(), timeout=15)
@@ -52,16 +52,17 @@ def fetch_leagues():
         
         leagues = {}
         
-        # The API returns a list of dicts with 'league' and 'name'
+        # 🔴 FIX: The API returns a dictionary with a 'leagues' key
+        if isinstance(data, dict) and "leagues" in data:
+            data = data["leagues"]
+            
         if isinstance(data, list):
             for item in data:
                 if isinstance(item, dict):
-                    # Extract the name and the key
                     name = item.get("name")
-                    key = item.get("league") # <--- FIXED: The API uses 'league' for the ID
+                    key = item.get("league")
                     
                     if name and key:
-                        # Add country to the name to avoid duplicates (e.g., "Ligue 1 (Algeria)")
                         country = item.get("country", "")
                         display_name = f"{name} ({country})" if country else name
                         leagues[display_name] = str(key)
@@ -94,9 +95,7 @@ def fetch_fixtures(league_key):
             dc_v2 = model_preds.get("dc_v2") or {}
             raw = dc_v2.get("raw") or {}
             
-            if not raw:
-                continue
-            
+            # If no raw predictions exist, still include it but with 0/0.5 defaults
             ht_over = raw.get("ht_over_1_5") or raw.get("ht_over_15")
             ht_under = 1.0 - float(ht_over) if ht_over is not None else 0.5
             
@@ -162,7 +161,6 @@ with tab_daily:
         
     # 2. League Selection
     if not use_manual:
-        # Sort by name, but we can also provide a searchable dropdown if there are too many
         selected_league_name = st.selectbox("Select a League", sorted(league_map.keys()))
         league_key = league_map[selected_league_name]
         st.info(f"Selected League Key: `{league_key}`")
@@ -179,7 +177,7 @@ with tab_daily:
             if err:
                 st.error(err)
             elif not fixtures:
-                st.warning(f"No upcoming fixtures with predictions found for '{league_key}'. Try another league.")
+                st.warning(f"No upcoming fixtures found for '{league_key}'.")
             else:
                 st.session_state.fixtures = fixtures
                 st.success(f"Loaded {len(fixtures)} fixtures from '{league_key}'.")
@@ -192,9 +190,9 @@ with tab_daily:
         col1, col2, col3 = st.columns(3)
         
         with col1:
-            min_ht_under = st.slider("Min HT Under 1.5 %", 20, 80, 45)
+            min_ht_under = st.slider("Min HT Under 1.5 %", 20, 80, 40)
         with col2:
-            max_btts = st.slider("Max BTTS %", 20, 80, 45, help="Lower BTTS means a more one-sided or defensive game.")
+            max_btts = st.slider("Max BTTS %", 20, 80, 50, help="Lower BTTS means a more one-sided or defensive game.")
         with col3:
             min_ft_under = st.slider("Min FT Under 2.5 %", 20, 80, 50, help="High Full-Time Under 2.5 supports a low-scoring game.")
             
@@ -222,6 +220,18 @@ with tab_daily:
             st.info("💡 **Pro Tip:** If BTTS is very low (< 35%) and HT Under 1.5 is > 50%, this is often a game where one team dominates possession but struggles to score early.")
         else:
             st.warning("No matches met all your filtering criteria. Try loosening the sliders.")
+            
+        # 🔴 NEW: Show raw data for debugging if filters are too strict
+        with st.expander("🛠️ View All Fetched Data (Debug)"):
+            raw_df_data = []
+            for f in fixtures:
+                raw_df_data.append({
+                    "Match": f"{f['team1']} vs {f['team2']}",
+                    "HT Under 1.5 %": round(f["ht_under_prob"] * 100, 1),
+                    "BTTS %": round(f["btts_prob"] * 100, 1),
+                    "FT Under 2.5 %": round(f["ft_under_25_prob"] * 100, 1)
+                })
+            st.dataframe(pd.DataFrame(raw_df_data), use_container_width=True, hide_index=True)
 
 # ---------------------------------------------------------- TAB 2
 with tab_manual:
