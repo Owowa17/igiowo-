@@ -69,7 +69,7 @@ def unwrap_error(e):
     return e
 
 # ==========================================================
-# LIVE SCORE MCP INTEGRATION
+# LIVE SCORE MCP INTEGRATION (FIXED)
 # ==========================================================
 async def fetch_team_stats_mcp_async(team_name):
     try:
@@ -87,7 +87,18 @@ async def fetch_team_stats_mcp_async(team_name):
                     team_id = None
                     try:
                         search_data = json.loads(search_text)
-                        team_id = search_data["teams"][0]["id"]
+                        # Check if results are empty
+                        if isinstance(search_data, dict) and "results" in search_data:
+                            if len(search_data["results"]) == 0:
+                                # Fallback: try cleaning the name (remove FC, GNK, etc.)
+                                clean_name = re.sub(r'\b(FC|GNK|FK|SC|TC)\b', '', team_name, flags=re.IGNORECASE).strip()
+                                if clean_name != team_name:
+                                    return await fetch_team_stats_mcp_async(clean_name)
+                                return {"error": f"Team not found. Raw search: {search_text[:50]}"}
+                            else:
+                                team_id = search_data["results"][0].get("id") or search_data["results"][0].get("team_id")
+                        elif "teams" in search_data:
+                            team_id = search_data["teams"][0]["id"]
                     except (json.JSONDecodeError, KeyError, IndexError):
                         match = re.search(r'id[:\s]+(\d+)', search_text, re.IGNORECASE)
                         if match:
@@ -96,8 +107,8 @@ async def fetch_team_stats_mcp_async(team_name):
                     if not team_id:
                         return {"error": f"Team ID not found. Raw search: {search_text[:50]}"}
                     
-                    # 2. Get Team Stats
-                    team_result = await session.call_tool("get_team", {"team_id": team_id})
+                    # 2. Get Team Stats (🔴 FIX: Use "id" instead of "team_id")
+                    team_result = await session.call_tool("get_team", {"id": team_id})
                     team_text = team_result.content[0].text if team_result.content else ""
                     if not team_text:
                         return {"error": "Empty team result"}
@@ -119,7 +130,6 @@ async def fetch_team_stats_mcp_async(team_name):
                             "name": team_name
                         }
                     except json.JSONDecodeError:
-                        # Fallback if MCP returns Markdown instead of JSON
                         return {"error": f"Team data is not JSON. Raw text starts with: {team_text[:100]}"}
                         
     except Exception as e:
@@ -250,7 +260,6 @@ with tab_daily:
                 home_stats = fetch_team_stats(home)
                 away_stats = fetch_team_stats(away)
 
-                # Check for errors in stats fetching
                 if isinstance(home_stats, dict) and "error" in home_stats:
                     debug_logs.append(f"❌ {home}: {home_stats['error']}")
                 elif isinstance(away_stats, dict) and "error" in away_stats:
@@ -265,7 +274,6 @@ with tab_daily:
                     
                     debug_logs.append(f"📊 {home} vs {away}: Math Prob {under_prob:.1%}")
 
-                    # Threshold set to 0.40 for testing purposes
                     if under_prob > 0.40: 
                         prompt = f"""
                         The mathematical model suggests a {under_prob:.1%} chance of Under 1.5 goals for {home} vs {away} in {league}.
@@ -294,7 +302,6 @@ with tab_daily:
             
             st.success(f"Hunter scan complete! Found {len(st.session_state.hunted_matches)} potential matches.")
             
-            # Display the debug logs
             with st.expander("🛠️ View Debug Logs (Why did it fail?)", expanded=True):
                 for log in debug_logs:
                     st.write(log)
