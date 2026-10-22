@@ -43,7 +43,7 @@ def get_headers():
 
 @st.cache_data(ttl=86400)
 def fetch_leagues():
-    """Fetches all available leagues and handles any JSON structure."""
+    """Fetches all available leagues and handles the specific API JSON structure."""
     try:
         url = f"{BASE_URL}/leagues/"
         r = requests.get(url, headers=get_headers(), timeout=15)
@@ -52,27 +52,20 @@ def fetch_leagues():
         
         leagues = {}
         
-        # Handle if wrapped in a "leagues" or "data" key
-        if isinstance(data, dict):
-            if "leagues" in data: data = data["leagues"]
-            elif "data" in data: data = data["data"]
-            elif all(isinstance(v, str) for v in data.values()):
-                # If the dict itself is the mapping
-                return data, None
-                
+        # The API returns a list of dicts with 'league' and 'name'
         if isinstance(data, list):
             for item in data:
                 if isinstance(item, dict):
-                    name = item.get("name") or item.get("league_name") or item.get("real_league_name") or item.get("display_name")
-                    key = item.get("key") or item.get("slug") or item.get("id") or item.get("league_key")
-                    if name and key:
-                        leagues[name] = str(key)
-                    elif key:
-                        leagues[str(key).title()] = str(key)
-                elif isinstance(item, str):
-                    # Just a list of strings
-                    leagues[item.replace("-", " ").title()] = item
+                    # Extract the name and the key
+                    name = item.get("name")
+                    key = item.get("league") # <--- FIXED: The API uses 'league' for the ID
                     
+                    if name and key:
+                        # Add country to the name to avoid duplicates (e.g., "Ligue 1 (Algeria)")
+                        country = item.get("country", "")
+                        display_name = f"{name} ({country})" if country else name
+                        leagues[display_name] = str(key)
+                        
         if not leagues:
             return {}, f"Could not parse leagues. Raw response: {str(data)[:100]}"
             
@@ -169,11 +162,12 @@ with tab_daily:
         
     # 2. League Selection
     if not use_manual:
+        # Sort by name, but we can also provide a searchable dropdown if there are too many
         selected_league_name = st.selectbox("Select a League", sorted(league_map.keys()))
         league_key = league_map[selected_league_name]
         st.info(f"Selected League Key: `{league_key}`")
     else:
-        league_key = st.text_input("Enter League Key manually (e.g., 'premier', 'spain1')", "premier")
+        league_key = st.text_input("Enter League Key manually (e.g., 'premier', 'algir1')", "premier")
     
     if st.button("📥 Fetch Fixtures", type="primary"):
         if not league_key:
