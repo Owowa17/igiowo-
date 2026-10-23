@@ -47,9 +47,7 @@ def send_telegram_message(text):
         "chat_id": TELEGRAM_CHAT_ID,
         "text": text,
         "parse_mode": "Markdown"
-    }
-    try:
-        response = requests.post(url, json=payload, timeout=10)
+    }  try : response = requests.post(url, json=payload, timeout=10)
         response_data = response.json()
         if response_data.get("ok"):
             print("✅ Message successfully sent to Telegram!")
