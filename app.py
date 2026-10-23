@@ -10,6 +10,8 @@ from rapidocr_onnxruntime import RapidOCR
 from groq import Groq
 from datetime import datetime
 from dotenv import load_dotenv
+from requests.adapters import HTTPAdapter
+from urllib3.util.retry import Retry
 
 st.set_page_config(page_title="AI Sharp Bettor", page_icon="📈", layout="wide")
 
@@ -69,10 +71,24 @@ def fetch_leagues():
         return {}, f"Failed to fetch leagues: {str(e)}"
 
 def fetch_fixtures(league_key):
-    """Fetches fixtures and extracts probabilities using the exact JSON structure."""
+    """Fetches fixtures with robust timeout and retry logic for Render cold starts."""
     try:
         url = f"{BASE_URL}/leagues/{league_key}/fixtures/"
-        r = requests.get(url, headers=get_headers(), timeout=15)
+        
+        # 🔴 Configure a session that retries on timeouts
+        session = requests.Session()
+        retry_strategy = Retry(
+            total=3, # Retry up to 3 times
+            backoff_factor=2, # Wait 2s, 4s, 8s between retries
+            status_forcelist=[500, 502, 503, 504], # Retry on server errors
+            allowed_methods=["GET"]
+        )
+        adapter = HTTPAdapter(max_retries=retry_strategy)
+        session.mount("https://", adapter)
+        session.mount("http://", adapter)
+        
+        # 🔴 Increase timeout to 60 seconds to survive cold starts
+        r = session.get(url, headers=get_headers(), timeout=60)
         
         if r.status_code != 200:
             return None, f"API Error {r.status_code}: {r.text[:100]}"
@@ -102,7 +118,7 @@ def fetch_fixtures(league_key):
             ft_over_25 = preds.get("over_2.5")
             ft_under_25_prob = (1.0 - float(ft_over_25)) if ft_over_25 is not None else 0.5
             
-            # 🔴 FIXED INDENTATION: Only add the fixture if real predictions exist
+            # Only add the fixture if real predictions exist
             if ht_under_prob != 0.5:
                 fixtures.append({
                     "team1": match.get("home_team", "Unknown"),
