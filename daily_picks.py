@@ -27,7 +27,8 @@ def filter_picks(matches):
         preds = dc_v2.get("calibrated") or dc_v2.get("raw") or {}
         
         ht_over = preds.get("ht_over_1.5")
-        if not ht_over: continue
+        if not ht_over: 
+            continue
         
         ht_under = (1.0 - float(ht_over)) * 100
         
@@ -47,12 +48,17 @@ def send_telegram_message(text):
         "chat_id": TELEGRAM_CHAT_ID,
         "text": text,
         "parse_mode": "Markdown"
-    }  try : response = requests.post(url, json=payload, timeout=10)
+    }
+    
+    try:
+        response = requests.post(url, json=payload, timeout=10)
         response_data = response.json()
+        
         if response_data.get("ok"):
             print("✅ Message successfully sent to Telegram!")
         else:
             print(f"❌ TELEGRAM API ERROR: {response_data}")
+            
     except Exception as e:
         print(f"❌ NETWORK ERROR: {e}")
 
@@ -75,6 +81,7 @@ if __name__ == "__main__":
         for p in all_picks[:10]:
             message += f"⚽ {p['match']} ({p['league']})\n"
             message += f"⏰ {p['time']} | HT Under 1.5: *{p['prob']}%*\n\n"
+        
         send_telegram_message(message)
     else:
         send_telegram_message("⚠️ No matches met the criteria today.")
