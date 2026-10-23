@@ -1,6 +1,7 @@
 name: Daily AI Betting Scanner
 
-on:
+"on":
+  push:
   schedule:
     - cron: '0 7 * * *'
   workflow_dispatch:
