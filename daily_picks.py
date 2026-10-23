@@ -2,7 +2,6 @@ import os
 import requests
 from datetime import datetime
 
-# Load secrets from GitHub
 FC_API_KEY = os.environ.get("FC_API_KEY")
 TELEGRAM_TOKEN = os.environ.get("TELEGRAM_TOKEN")
 TELEGRAM_CHAT_ID = os.environ.get("TELEGRAM_CHAT_ID")
@@ -52,12 +51,10 @@ def send_telegram_message(text):
     try:
         response = requests.post(url, json=payload, timeout=10)
         response_data = response.json()
-        
         if response_data.get("ok"):
             print("✅ Message successfully sent to Telegram!")
         else:
             print(f"❌ TELEGRAM API ERROR: {response_data}")
-            
     except Exception as e:
         print(f"❌ NETWORK ERROR: {e}")
 
@@ -80,7 +77,6 @@ if __name__ == "__main__":
         for p in all_picks[:10]:
             message += f"⚽ {p['match']} ({p['league']})\n"
             message += f"⏰ {p['time']} | HT Under 1.5: *{p['prob']}%*\n\n"
-        
         send_telegram_message(message)
     else:
         send_telegram_message("⚠️ No matches met the criteria today.")
