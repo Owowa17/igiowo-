@@ -48,7 +48,7 @@ def filter_picks(matches):
     candidates.sort(key=lambda x: x["prob"], reverse=True)
     return candidates
 
-def send_telegram_message(text):
+def def send_telegram_message(text):
     url = f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/sendMessage"
     payload = {
         "chat_id": TELEGRAM_CHAT_ID,
@@ -56,7 +56,6 @@ def send_telegram_message(text):
         "parse_mode": "Markdown"
     }
     try:
-        # We assign the response to a variable to check it
         response = requests.post(url, json=payload, timeout=10)
         response_data = response.json()
         
@@ -67,7 +66,6 @@ def send_telegram_message(text):
             
     except Exception as e:
         print(f"❌ NETWORK ERROR: {e}")
-
 if __name__ == "__main__":
     print("🤖 Starting daily AI scan...")
     all_picks = []
