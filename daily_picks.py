@@ -56,10 +56,17 @@ def send_telegram_message(text):
         "parse_mode": "Markdown"
     }
     try:
-        requests.post(url, json=payload, timeout=10)
-        print("✅ Message sent to Telegram")
+        # We assign the response to a variable to check it
+        response = requests.post(url, json=payload, timeout=10)
+        response_data = response.json()
+        
+        if response_data.get("ok"):
+            print("✅ Message successfully sent to Telegram!")
+        else:
+            print(f"❌ TELEGRAM API ERROR: {response_data}")
+            
     except Exception as e:
-        print(f"Error sending to Telegram: {e}")
+        print(f"❌ NETWORK ERROR: {e}")
 
 if __name__ == "__main__":
     print("🤖 Starting daily AI scan...")
