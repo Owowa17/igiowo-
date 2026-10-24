@@ -1,5 +1,6 @@
 import os
 import requests
+import time
 from datetime import datetime
 
 FC_API_KEY = os.environ.get("FC_API_KEY")
@@ -11,13 +12,22 @@ LEAGUES_TO_SCAN = ["turkey2", "germany2", "premier"]
 def get_fixtures(league_key):
     url = f"https://footballcharts-backend.onrender.com/api/v1/leagues/{league_key}/fixtures/"
     headers = {"Authorization": f"Bearer {FC_API_KEY}"}
-    try:
-        r = requests.get(url, headers=headers, timeout=60)
-        r.raise_for_status()
-        return r.json().get("matches", [])
-    except Exception as e:
-        print(f"Error fetching data for {league_key}: {e}")
-        return []
+    
+    # Retry logic for Render cold starts / timeouts
+    for attempt in range(3):
+        try:
+            # Increased timeout to 90 seconds
+            r = requests.get(url, headers=headers, timeout=90)
+            r.raise_for_status()
+            return r.json().get("matches", [])
+        except requests.exceptions.Timeout:
+            print(f"Timeout on {league_key} (Attempt {attempt+1}/3). Retrying...")
+            time.sleep(5)
+        except Exception as e:
+            print(f"Error fetching data for {league_key}: {e}")
+            break
+            
+    return []
 
 def filter_picks(matches):
     candidates = []
