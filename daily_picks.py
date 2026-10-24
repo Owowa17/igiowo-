@@ -1,29 +1,30 @@
+import os
 import requests
-from requests.adapters import HTTPAdapter
-from urllib3.util.retry import Retry
+import time
+from datetime import datetime
+
+FC_API_KEY = os.environ.get("FC_API_KEY")
+TELEGRAM_TOKEN = os.environ.get("TELEGRAM_TOKEN")
+TELEGRAM_CHAT_ID = os.environ.get("TELEGRAM_CHAT_ID")
+
+LEAGUES_TO_SCAN = ["turkey2", "germany2", "premier"]
 
 def get_fixtures(league_key):
     url = f"https://footballcharts-backend.onrender.com/api/v1/leagues/{league_key}/fixtures/"
     headers = {"Authorization": f"Bearer {FC_API_KEY}"}
     
-    # Configure a session that automatically retries on 502 errors
-    session = requests.Session()
-    retries = Retry(
-        total=3,                # Total number of retries
-        backoff_factor=2,       # Wait 2s, 4s, 8s between retries
-        status_forcelist=[502, 503, 504], # Automatically retry these status codes
-        allowed_methods=["GET"]
-    )
-    session.mount("https://", HTTPAdapter(max_retries=retries))
-    
-    try:
-        # 90-second timeout to survive cold starts
-        r = session.get(url, headers=headers, timeout=90)
-        r.raise_for_status()
-        return r.json().get("matches", [])
-    except Exception as e:
-        print(f"Error fetching data for {league_key} after retries: {e}")
-        return []
+    # Simple retry loop (3 attempts)
+    for attempt in range(3):
+        try:
+            r = requests.get(url, headers=headers, timeout=60)
+            r.raise_for_status()
+            return r.json().get("matches", [])
+        except Exception as e:
+            print(f"Attempt {attempt+1} failed for {league_key}: {e}")
+            time.sleep(5) # Wait 5 seconds before trying again
+            
+    print(f"Failed to fetch {league_key} after 3 attempts.")
+    return []
 
 def filter_picks(matches):
     candidates = []
