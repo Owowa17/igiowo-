@@ -1,33 +1,29 @@
-import os
 import requests
-import time
-from datetime import datetime
-
-FC_API_KEY = os.environ.get("FC_API_KEY")
-TELEGRAM_TOKEN = os.environ.get("TELEGRAM_TOKEN")
-TELEGRAM_CHAT_ID = os.environ.get("TELEGRAM_CHAT_ID")
-
-LEAGUES_TO_SCAN = ["turkey2", "germany2", "premier"]
+from requests.adapters import HTTPAdapter
+from urllib3.util.retry import Retry
 
 def get_fixtures(league_key):
     url = f"https://footballcharts-backend.onrender.com/api/v1/leagues/{league_key}/fixtures/"
     headers = {"Authorization": f"Bearer {FC_API_KEY}"}
     
-    # Retry logic for Render cold starts / timeouts
-    for attempt in range(3):
-        try:
-            # Increased timeout to 90 seconds
-            r = requests.get(url, headers=headers, timeout=90)
-            r.raise_for_status()
-            return r.json().get("matches", [])
-        except requests.exceptions.Timeout:
-            print(f"Timeout on {league_key} (Attempt {attempt+1}/3). Retrying...")
-            time.sleep(5)
-        except Exception as e:
-            print(f"Error fetching data for {league_key}: {e}")
-            break
-            
-    return []
+    # Configure a session that automatically retries on 502 errors
+    session = requests.Session()
+    retries = Retry(
+        total=3,                # Total number of retries
+        backoff_factor=2,       # Wait 2s, 4s, 8s between retries
+        status_forcelist=[502, 503, 504], # Automatically retry these status codes
+        allowed_methods=["GET"]
+    )
+    session.mount("https://", HTTPAdapter(max_retries=retries))
+    
+    try:
+        # 90-second timeout to survive cold starts
+        r = session.get(url, headers=headers, timeout=90)
+        r.raise_for_status()
+        return r.json().get("matches", [])
+    except Exception as e:
+        print(f"Error fetching data for {league_key} after retries: {e}")
+        return []
 
 def filter_picks(matches):
     candidates = []
