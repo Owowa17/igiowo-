@@ -7,6 +7,7 @@ FC_API_KEY = os.environ.get("FC_API_KEY")
 TELEGRAM_TOKEN = os.environ.get("TELEGRAM_TOKEN")
 TELEGRAM_CHAT_ID = os.environ.get("TELEGRAM_CHAT_ID")
 
+# This is the line that was missing!
 LEAGUES_TO_SCAN = ["turkey2", "germany2", "premier"]
 
 def get_fixtures(league_key):
@@ -21,7 +22,7 @@ def get_fixtures(league_key):
             return r.json().get("matches", [])
         except Exception as e:
             print(f"Attempt {attempt+1} failed for {league_key}: {e}")
-            time.sleep(5) # Wait 5 seconds before trying again
+            time.sleep(5) 
             
     print(f"Failed to fetch {league_key} after 3 attempts.")
     return []
