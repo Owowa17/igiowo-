@@ -15,30 +15,30 @@ def get_fixtures(league_key):
     
     for attempt in range(3):
         try:
-            r = requests.get(url, headers=headers, timeout=60)
+            # Reduced timeout to 20s to prevent GH Action from hanging
+            r = requests.get(url, headers=headers, timeout=20) 
             r.raise_for_status()
             data = r.json()
             matches = data.get("matches", [])
             
-            # Freshness Check: Ensure the API has updated for today
+            # Freshness Check
             if matches:
                 computed_at_str = matches[0].get("computed_at")
                 if computed_at_str:
-                    # Example: "2026-10-22T17:47:04.995660+00:00"
                     computed_date = computed_at_str.split("T")[0]
                     today_utc = datetime.now(timezone.utc).strftime("%Y-%m-%d")
                     
                     if computed_date != today_utc:
                         print(f"⚠️ Data for {league_key} is stale (Computed: {computed_date}). API hasn't refreshed yet.")
-                        return [] # Skip sending old picks
+                        return None # Return None to indicate stale data/failure
                         
-            return matches
+            return matches # Returns [] if successful but no matches
         except Exception as e:
             print(f"Attempt {attempt+1} failed for {league_key}: {e}")
             time.sleep(5) 
             
     print(f"Failed to fetch {league_key} after 3 attempts.")
-    return []
+    return None # Return None on total failure
 
 def filter_picks(matches):
     candidates = []
@@ -53,7 +53,6 @@ def filter_picks(matches):
         
         ht_under = (1.0 - float(ht_over)) * 100
         
-        # Only pick matches with 70%+ probability for higher win rate
         if ht_under >= 70:
             candidates.append({
                 "match": f"{match['home_team']} vs {match['away_team']}",
@@ -69,7 +68,7 @@ def send_telegram_message(text):
     payload = {
         "chat_id": TELEGRAM_CHAT_ID,
         "text": text,
-        "parse_mode": "Markdown"
+        "parse_mode": "HTML" # Changed to HTML for safer parsing
     }
     
     try:
@@ -87,15 +86,15 @@ def send_telegram_message(text):
 if __name__ == "__main__":
     print("🤖 Starting daily AI scan...")
     all_picks = []
-    data_was_stale = False
+    api_failed_or_stale = False
     
     for league in LEAGUES_TO_SCAN:
         print(f"Scanning {league}...")
         matches = get_fixtures(league)
         
-        # If no matches returned, it means either API failed or data was stale
-        if not matches:
-            data_was_stale = True
+        # If matches is None, the API failed or data was stale
+        if matches is None:
+            api_failed_or_stale = True
             continue
             
         picks = filter_picks(matches)
@@ -106,14 +105,15 @@ if __name__ == "__main__":
     all_picks.sort(key=lambda x: x["prob"], reverse=True)
     
     if all_picks:
-        message = f"🎯 *Daily AI Picks - {datetime.now(timezone.utc).strftime('%Y-%m-%d')}*\n\n"
-        for p in all_picks[:3]: # Only send the top 3 picks
+        # Changed Markdown (*) to HTML (<b>) tags
+        message = f"🎯 <b>Daily AI Picks - {datetime.now(timezone.utc).strftime('%Y-%m-%d')}</b>\n\n"
+        for p in all_picks[:3]:
             message += f"⚽ {p['match']} ({p['league']})\n"
-            message += f"⏰ {p['time']} | HT Under 1.5: *{p['prob']}%*\n\n"
+            message += f"⏰ {p['time']} | HT Under 1.5: <b>{p['prob']}%</b>\n\n"
         
         send_telegram_message(message)
     else:
-        if data_was_stale:
-            print("Skipping Telegram send. Data is not fresh yet.")
+        if api_failed_or_stale:
+            print("Skipping Telegram send. Data is not fresh yet or API failed.")
         else:
             send_telegram_message("⚠️ No matches met the 70% criteria today.")
