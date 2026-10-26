@@ -56,22 +56,22 @@ def filter_picks(matches):
         match_name = f"{match['home_team']} vs {match['away_team']}"
         match_time = match.get("time", "N/A")
         
-        # --- HT Under 1.5 ---
+        # --- HT Under 1.5 (Keep at 70%) ---
         ht_over = preds.get("ht_over_1.5")
         if ht_over:
             ht_under = (1.0 - float(ht_over)) * 100
-            if ht_under >= 70:
+            if ht_under >= 70:  # HT threshold
                 ht_candidates.append({
                     "match": match_name,
                     "time": match_time,
                     "prob": round(ht_under, 1)
                 })
                 
-        # --- FT Under 2.5 ---
+        # --- FT Under 2.5 (Lower threshold to 65%) ---
         ft_over = preds.get("ft_over_2.5")
         if ft_over:
             ft_under = (1.0 - float(ft_over)) * 100
-            if ft_under >= 70:
+            if ft_under >= 65:  # <--- LOWERED THRESHOLD HERE
                 ft_candidates.append({
                     "match": match_name,
                     "time": match_time,
