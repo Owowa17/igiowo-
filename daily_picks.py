@@ -8,21 +8,16 @@ TELEGRAM_TOKEN = os.environ.get("TELEGRAM_TOKEN")
 TELEGRAM_CHAT_ID = os.environ.get("TELEGRAM_CHAT_ID")
 
 LEAGUES_TO_SCAN = [
-    "premier",      # England
-    "spain1",       # Spain La Liga
-    "italy1",       # Italy Serie A
-    "germany1",     # Germany Bundesliga
-    "france1",      # France Ligue 1
-    "england2",     # England Championship
-    "spain2",       # Spain Segunda
-    "italy2",       # Italy Serie B
-    "germany2",     # Germany 2. Bundesliga
-    "france2",      # France Ligue 2
-    "turkey2",      # Turkey 1. Lig
-    "brazil1",      # Brazil Serie A
-    "argentina1",   # Argentina Primera
-    "netherlands2", # Netherlands Eerste Divisie
-    "portugal2"     # Portugal Segunda Liga
+    "premier",      # England - Premier League
+    "england2",     # England - Championship
+    "spain1",       # Spain - La Liga
+    "italy1",       # Italy - Serie A
+    "italy2",       # Italy - Serie B
+    "germany2",     # Germany - 2. Bundesliga
+    "france2",      # France - Ligue 2
+    "turkey2",      # Turkey - 1. Lig
+    "brazil1",      # Brazil - Serie A
+    "argentina1"    # Argentina - Primera Division
 ]
 def get_fixtures(league_key):
     url = f"https://footballcharts-backend.onrender.com/api/v1/leagues/{league_key}/fixtures/"
