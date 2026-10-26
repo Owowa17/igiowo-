@@ -2,9 +2,11 @@ name: Daily AI Betting Scanner
 
 on:
   schedule:
-    # Runs at 07:00 UTC (8:00 AM Nigeria time)
     - cron: '0 7 * * *'
-  workflow_dispatch: # Allows you to run it manually only when you want to
+  workflow_dispatch:
+
+permissions:
+  contents: write # Crucial: Allows the bot to save the history file
 
 jobs:
   build:
@@ -23,9 +25,17 @@ jobs:
           python -m pip install --upgrade pip
           pip install requests
 
-      - name: Run daily scan
+      - name: Run daily scan & tracker
         env:
           FC_API_KEY: ${{ secrets.FC_API_KEY }}
           TELEGRAM_TOKEN: ${{ secrets.TELEGRAM_TOKEN }}
           TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
         run: python daily_picks.py
+
+      - name: Commit History File
+        run: |
+          git config --global user.name "IgiowoBot"
+          git config --global user.email "bot@igiowo.com"
+          git add picks_history.json || true
+          git commit -m "Update picks history" || true
+          git push || true
