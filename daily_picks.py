@@ -1,7 +1,8 @@
 import os
 import requests
 import time
-from datetime import datetime, timezone
+import json
+from datetime import datetime, timezone, timedelta
 
 FC_API_KEY = os.environ.get("FC_API_KEY")
 TELEGRAM_TOKEN = os.environ.get("TELEGRAM_TOKEN")
@@ -11,69 +12,23 @@ LEAGUES_TO_SCAN = [
     "premier", "england2", "spain1", "italy1", "italy2", 
     "germany2", "france2", "turkey2", "brazil1", "argentina1"
 ]
+HISTORY_FILE = "picks_history.json"
 
-def get_fixtures(league_key):
+def get_api_data(league_key, date_str=None):
     url = f"https://footballcharts-backend.onrender.com/api/v1/leagues/{league_key}/fixtures/"
+    if date_str:
+        url += f"?date={date_str}"
+        
     headers = {"Authorization": f"Bearer {FC_API_KEY}"}
-    
-    for attempt in range(3):
+    for attempt in range(2):
         try:
             r = requests.get(url, headers=headers, timeout=60)
             r.raise_for_status()
-            data = r.json()
-            matches = data.get("matches", [])
-            
-            # Freshness Check: Ensure the API has updated for today
-            if matches:
-                computed_at_str = matches[0].get("computed_at")
-                if computed_at_str:
-                    computed_date = computed_at_str.split("T")[0]
-                    today_utc = datetime.now(timezone.utc).strftime("%Y-%m-%d")
-                    if computed_date != today_utc:
-                        print(f"⚠️ Data for {league_key} is stale.")
-                        return [] 
-            return matches
+            return r.json().get("matches", [])
         except Exception as e:
             print(f"Attempt {attempt+1} failed for {league_key}: {e}")
-            time.sleep(5) 
+            time.sleep(5)
     return []
-
-def filter_picks(matches):
-    ht_candidates = []
-    ft_candidates = []
-    
-    for match in matches:
-        model_preds = match.get("model_predictions") or {}
-        dc_v2 = model_preds.get("dc_v2") or {}
-        preds = dc_v2.get("calibrated") or dc_v2.get("raw") or {}
-        
-        # --- 1. HT Under 1.5 ---
-        ht_over = preds.get("ht_over_1.5")
-        if ht_over:
-            ht_under = (1.0 - float(ht_over)) * 100
-            if ht_under >= 70:
-                ht_candidates.append({
-                    "match": f"{match['home_team']} vs {match['away_team']}",
-                    "time": match.get("time", "N/A"),
-                    "prob": round(ht_under, 1),
-                    "market": "HT Under 1.5"
-                })
-                
-        # --- 2. FT Under 2.5 ---
-        ft_over = preds.get("over_2.5")
-        if ft_over:
-            ft_under = (1.0 - float(ft_over)) * 100
-            if ft_under >= 70: # Keeping the same 70% threshold
-                ft_candidates.append({
-                    "match": f"{match['home_team']} vs {match['away_team']}",
-                    "time": match.get("time", "N/A"),
-                    "prob": round(ft_under, 1),
-                    "market": "FT Under 2.5"
-                })
-    
-    ht_candidates.sort(key=lambda x: x["prob"], reverse=True)
-    ft_candidates.sort(key=lambda x: x["prob"], reverse=True)
-    return ht_candidates, ft_candidates
 
 def send_telegram_message(text):
     url = f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/sendMessage"
@@ -81,52 +36,151 @@ def send_telegram_message(text):
     try:
         response = requests.post(url, json=payload, timeout=10)
         if response.json().get("ok"):
-            print("✅ Message successfully sent to Telegram!")
+            print("✅ Message sent to Telegram!")
         else:
-            print(f"❌ TELEGRAM API ERROR: {response.json()}")
+            print(f"❌ TELEGRAM ERROR: {response.json()}")
     except Exception as e:
         print(f"❌ NETWORK ERROR: {e}")
 
-if __name__ == "__main__":
+# --- 1. RESULTS TRACKER ---
+def track_results():
+    if not os.path.exists(HISTORY_FILE):
+        print("No history file found. Skipping tracker.")
+        return
+
+    with open(HISTORY_FILE, "r") as f:
+        history = json.load(f)
+
+    yesterday = (datetime.now(timezone.utc) - timedelta(days=1)).strftime("%Y-%m-%d")
+    pending_picks = [p for p in history if p["date"] == yesterday and p["status"] == "pending"]
+
+    if not pending_picks:
+        print("No pending picks from yesterday.")
+        return
+
+    print(f"Tracking {len(pending_picks)} picks from yesterday...")
+    results_msg = f"📊 *Results for {yesterday}*\n\n"
+    wins = 0
+    total = 0
+
+    for pick in pending_picks:
+        # Fetch yesterday's match data to get the score
+        matches = get_api_data(pick["league"], yesterday)
+        match_found = False
+        
+        for m in matches:
+            match_name = f"{m.get('home_team')} vs {m.get('away_team')}"
+            if match_name == pick["match"]:
+                match_found = True
+                score = m.get("score", {})
+                ft_home = score.get("fulltime", {}).get("home")
+                ft_away = score.get("fulltime", {}).get("away")
+                ht_home = score.get("halftime", {}).get("home")
+                ht_away = score.get("halftime", {}).get("away")
+
+                if ft_home is None or ft_away is None:
+                    results_msg += f"⏳ {match_name} - Score unavailable\n"
+                    break
+
+                total += 1
+                is_win = False
+                
+                if pick["market"] == "HT Under 1.5":
+                    if ht_home + ht_away <= 1:
+                        is_win = True
+                elif pick["market"] == "FT Under 2.5":
+                    if ft_home + ft_away <= 2:
+                        is_win = True
+                
+                if is_win:
+                    wins += 1
+                    pick["status"] = "WIN"
+                    results_msg += f"✅ {match_name} - WON ({ht_home}-{ht_away} HT | {ft_home}-{ft_away} FT)\n"
+                else:
+                    pick["status"] = "LOSS"
+                    results_msg += f"❌ {match_name} - LOST ({ht_home}-{ht_away} HT | {ft_home}-{ft_away} FT)\n"
+                break
+        
+        if not match_found:
+            results_msg += f"⚠️ {pick['match']} - Match data not found\n"
+
+    if total > 0:
+        results_msg += f"\n🏆 *Win Rate:* {wins}/{total} ({(wins/total)*100:.1f}%)"
+        send_telegram_message(results_msg)
+
+    with open(HISTORY_FILE, "w") as f:
+        json.dump(history, f, indent=4)
+
+# --- 2. NEW PICKS GENERATOR ---
+def generate_picks():
     print("🤖 Starting daily AI scan...")
     all_ht_picks = []
     all_ft_picks = []
+    today_date = datetime.now(timezone.utc).strftime("%Y-%m-%d")
     
     for league in LEAGUES_TO_SCAN:
-        print(f"Scanning {league}...")
-        matches = get_fixtures(league)
-        if not matches:
-            continue
+        matches = get_api_data(league)
+        for match in matches:
+            preds = match.get("model_predictions", {}).get("dc_v2", {}).get("calibrated", {})
             
-        ht_picks, ft_picks = filter_picks(matches)
-        for p in ht_picks:
-            p["league"] = league
-        for p in ft_picks:
-            p["league"] = league
-            
-        all_ht_picks.extend(ht_picks)
-        all_ft_picks.extend(ft_picks)
-    
+            # HT Under 1.5
+            ht_over = preds.get("ht_over_1.5")
+            if ht_over and (1.0 - float(ht_over)) * 100 >= 70:
+                all_ht_picks.append({
+                    "match": f"{match['home_team']} vs {match['away_team']}",
+                    "time": match.get("time", "N/A"),
+                    "prob": round((1.0 - float(ht_over)) * 100, 1),
+                    "market": "HT Under 1.5",
+                    "league": league,
+                    "date": today_date,
+                    "status": "pending"
+                })
+                
+            # FT Under 2.5
+            ft_over = preds.get("over_2.5")
+            if ft_over and (1.0 - float(ft_over)) * 100 >= 70:
+                all_ft_picks.append({
+                    "match": f"{match['home_team']} vs {match['away_team']}",
+                    "time": match.get("time", "N/A"),
+                    "prob": round((1.0 - float(ft_over)) * 100, 1),
+                    "market": "FT Under 2.5",
+                    "league": league,
+                    "date": today_date,
+                    "status": "pending"
+                })
+
     all_ht_picks.sort(key=lambda x: x["prob"], reverse=True)
     all_ft_picks.sort(key=lambda x: x["prob"], reverse=True)
     
-    if all_ht_picks or all_ft_picks:
-        message = f"🎯 *Daily AI Picks - {datetime.now(timezone.utc).strftime('%Y-%m-%d')}*\n\n"
-        
-        # Top 3 HT Picks
-        if all_ht_picks:
-            message += "⚡ *Top 3 HT Under 1.5 Goals* ⚡\n"
-            for p in all_ht_picks[:3]:
-                message += f"⚽ {p['match']} ({p['league']})\n"
-                message += f"⏰ {p['time']} | Prob: *{p['prob']}%*\n\n"
-                
-        # Top 3 FT Picks
-        if all_ft_picks:
-            message += "🛡️ *Top 3 FT Under 2.5 Goals (Safe)* 🛡️\n"
-            for p in all_ft_picks[:3]:
-                message += f"⚽ {p['match']} ({p['league']})\n"
-                message += f"⏰ {p['time']} | Prob: *{p['prob']}%*\n\n"
-        
+    top_ht = all_ht_picks[:3]
+    top_ft = all_ft_picks[:3]
+    
+    if top_ht or top_ft:
+        message = f"🎯 *Daily AI Picks - {today_date}*\n\n"
+        if top_ht:
+            message += "⚡ *Top 3 HT Under 1.5* ⚡\n"
+            for p in top_ht:
+                message += f"⚽ {p['match']} ({p['league']})\n⏰ {p['time']} | *{p['prob']}%*\n\n"
+        if top_ft:
+            message += "🛡️ *Top 3 FT Under 2.5* 🛡️\n"
+            for p in top_ft:
+                message += f"⚽ {p['match']} ({p['league']})\n⏰ {p['time']} | *{p['prob']}%*\n\n"
         send_telegram_message(message)
     else:
         send_telegram_message("⚠️ No matches met the 70% criteria today.")
+
+    # Save to History
+    history = []
+    if os.path.exists(HISTORY_FILE):
+        with open(HISTORY_FILE, "r") as f:
+            history = json.load(f)
+            
+    history.extend(top_ht)
+    history.extend(top_ft)
+    
+    with open(HISTORY_FILE, "w") as f:
+        json.dump(history, f, indent=4)
+
+if __name__ == "__main__":
+    track_results()    # 1. First, check yesterday's results
+    generate_picks()   # 2. Then, scan for today's picks
