@@ -43,35 +43,55 @@ def get_fixtures(league_key):
     print(f"Failed to fetch {league_key} after 3 attempts.")
     return None 
 
-# --- FILTER PICKS ---
 def filter_picks(matches):
     ht_candidates = []
     ft_candidates = []
     
+    # Get today's date in UTC format (YYYY-MM-DD)
+    today_utc_str = datetime.now(timezone.utc).strftime("%Y-%m-%d")
+    
     for match in matches:
+        # --- 1. DATE FILTER (New Addition) ---
+        # Try to find the date field. It could be named 'date', 'match_date', 'kickoff', or 'start_time'
+        match_date = match.get("date") or match.get("match_date") or match.get("kickoff") or match.get("start_time")
+        
+        # If the API only has "time" (e.g., "15:00"), we might need to check the raw data. 
+        # Assuming the API provides a full date string somewhere (like "2026-10-27T15:00:00Z"):
+        if match_date:
+            # Check if today's date is in the match date string
+            if today_utc_str not in str(match_date):
+                continue # Skip this match, it's not today
+        else:
+            # If we can't find a date field, we might want to print a warning to debug
+            # print(f"Warning: No date found for {match.get('home_team')}")
+            pass # Proceed if we can't find a date, but we recommend checking the API response
+
+        # --- 2. EXISTING FILTER LOGIC ---
         model_preds = match.get("model_predictions") or {}
         dc_v2 = model_preds.get("dc_v2") or {}
         preds = dc_v2.get("calibrated") or dc_v2.get("raw") or {}
         
         match_name = f"{match['home_team']} vs {match['away_team']}"
-        match_time = match.get("time", "N/A")
         
-        # --- HT Under 1.5 (Keep at 70%) ---
+        # Extract time for display
+        match_time = match.get("time", "N/A") 
+        
+        # --- HT Under 1.5 ---
         ht_over = preds.get("ht_over_1.5")
         if ht_over:
             ht_under = (1.0 - float(ht_over)) * 100
-            if ht_under >= 70:  # HT threshold
+            if ht_under >= 70:
                 ht_candidates.append({
                     "match": match_name,
                     "time": match_time,
                     "prob": round(ht_under, 1)
                 })
                 
-        # --- FT Under 2.5 (Lower threshold to 65%) ---
+        # --- FT Under 2.5 ---
         ft_over = preds.get("ft_over_2.5")
         if ft_over:
             ft_under = (1.0 - float(ft_over)) * 100
-            if ft_under >= 65:  # <--- LOWERED THRESHOLD HERE
+            if ft_under >= 65: 
                 ft_candidates.append({
                     "match": match_name,
                     "time": match_time,
