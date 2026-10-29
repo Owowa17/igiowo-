@@ -1,10 +1,15 @@
 name: Daily AI Betting Scanner
 
 on:
-  # schedule:
+  schedule:
     # 07:00 UTC is exactly 08:00 AM Nigeria Time (WAT)
-   # - cron: '0 7 * * *'
-  workflow_dispatch:
+    - cron: '0 7 * * *'
+  workflow_dispatch: # Allows you to run it manually from the Actions tab
+
+# Prevents multiple runs from fighting over the Git push
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
 
 permissions:
   contents: write # Crucial: Allows the bot to save the history file
@@ -14,10 +19,12 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - name: Checkout repository
-        uses: actions/checkout@v3
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0 # Crucial: Fetches full history so git rebase works perfectly
 
       - name: Set up Python
-        uses: actions/setup-python@v4
+        uses: actions/setup-python@v5
         with:
           python-version: '3.10'
 
@@ -35,8 +42,14 @@ jobs:
 
       - name: Commit History File
         run: |
-          git config --global user.name "IgiowoBot"
-          git config --global user.email "bot@igiowo.com"
-          git add picks_history.json || true
-          git commit -m "Update picks history" || true
-          git push || true
+          git config --local user.name "IgiowoBot"
+          git config --local user.email "bot@igiowo.com"
+          git add picks_history.json
+          # Commit only if there are changes, otherwise just move on
+          git commit -m "Update picks history" || echo "No changes to commit"
+          
+          # Pull the latest remote changes and rebase before pushing
+          git pull --rebase origin main
+          
+          # Push the changes. If this fails, the action will turn red so you know!
+          git push origin main
