@@ -23,19 +23,25 @@ def get_fixtures(league_key):
             data = r.json()
             matches = data.get("matches", [])
             
+            if not matches:
+                print(f"⚠️ {league_key}: API returned 0 matches. (Empty list)")
+                return []
+                
             if matches:
                 computed_at_str = matches[0].get("computed_at")
                 if computed_at_str:
                     computed_date = computed_at_str.split("T")[0]
                     today_utc = datetime.now(timezone.utc).strftime("%Y-%m-%d")
                     if computed_date != today_utc:
-                        print(f"⚠️ Data for {league_key} is stale.")
+                        print(f"⚠️ {league_key}: Data is stale. Computed: {computed_date}, Today: {today_utc}")
                         return None 
+            print(f"✅ {league_key}: Successfully fetched {len(matches)} matches.")
             return matches 
         except Exception as e:
-            print(f"Attempt {attempt+1} failed for {league_key}: {e}")
+            print(f"❌ Attempt {attempt+1} failed for {league_key}: {e}")
             time.sleep(5) 
             
+    print(f"❌ {league_key}: Failed all 3 attempts.")
     return None 
 
 def filter_picks(matches):
@@ -44,6 +50,7 @@ def filter_picks(matches):
     dc_candidates = []
     
     for match in matches:
+        # Date parsing
         raw_date = match.get("date") or match.get("match_date") or match.get("start_time") or match.get("time") or ""
         if len(str(raw_date)) >= 10:
             match_date = str(raw_date)[:10]
@@ -53,10 +60,17 @@ def filter_picks(matches):
         model_preds = match.get("model_predictions") or {}
         dc_v2 = model_preds.get("dc_v2") or {}
         preds = dc_v2.get("calibrated") or dc_v2.get("raw") or {}
-        print(f"DEBUG DATA for {match['home_team']}: {preds.keys()}")
+        
         match_name = f"{match['home_team']} vs {match['away_team']}"
         match_time = match.get("time", "N/A")
         
+        # --- DEBUG PRINT ---
+        if not preds:
+            print(f"❌ No prediction data for {match_name}. Available model keys: {model_preds.keys()}")
+            continue # Skip match if no prediction data at all
+        else:
+            print(f"🔍 Checking {match_name} | Keys: {list(preds.keys())[:5]}...")
+
         # --- HT Under 1.5 ---
         ht_over = preds.get("ht_over_1.5")
         if ht_over:
@@ -76,11 +90,10 @@ def filter_picks(matches):
                 })
 
         # --- DOUBLE CHANCE (1X or X2) ---
-        # Try to get direct DC probabilities, or calculate from 1X2
         dc_1x = preds.get("dc_1x") or preds.get("1x")
         dc_x2 = preds.get("dc_x2") or preds.get("x2")
         
-        # Fallback: If API doesn't have DC, calculate it from 1X2
+        # Fallback calculation
         if not dc_1x and not dc_x2:
             p_home = preds.get("ft_home_win") or preds.get("home_win") or preds.get("1")
             p_draw = preds.get("ft_draw") or preds.get("draw") or preds.get("x")
@@ -91,7 +104,7 @@ def filter_picks(matches):
             if p_away and p_draw:
                 dc_x2 = float(p_away) + float(p_draw)
                 
-        # Check 1X Probability (Threshold 80%)
+        # Check 1X 
         if dc_1x:
             dc_1x_prob = float(dc_1x) * 100 if float(dc_1x) <= 1.0 else float(dc_1x)
             if dc_1x_prob >= 80:
@@ -99,7 +112,7 @@ def filter_picks(matches):
                     "match": match_name, "time": match_time, "prob": round(dc_1x_prob, 1), "date": match_date, "market": "Double Chance (1X)"
                 })
                 
-        # Check X2 Probability (Threshold 80%)
+        # Check X2 
         if dc_x2:
             dc_x2_prob = float(dc_x2) * 100 if float(dc_x2) <= 1.0 else float(dc_x2)
             if dc_x2_prob >= 80:
@@ -117,6 +130,8 @@ def send_telegram_message(text):
         response = requests.post(url, json=payload, timeout=10)
         if not response.json().get("ok"):
             print(f"❌ TELEGRAM API ERROR: {response.json()}")
+        else:
+            print("✅ Message successfully sent to Telegram!")
     except Exception as e:
         print(f"❌ NETWORK ERROR: {e}")
 
@@ -126,7 +141,7 @@ def generate_picks():
     api_failed_or_stale = False
     today_date = datetime.now(timezone.utc).strftime('%Y-%m-%d')
     
-    # Load History to prevent duplicate picks
+    # Load History
     picked_matches = set()
     if os.path.exists(HISTORY_FILE):
         try:
@@ -134,19 +149,21 @@ def generate_picks():
                 history_data = json.load(f)
                 for item in history_data:
                     picked_matches.add(item.get("match"))
+            print(f"📚 Loaded {len(picked_matches)} previously picked matches from history.")
         except Exception as e:
             print(f"Could not load history: {e}")
     
     for league in LEAGUES_TO_SCAN:
-        print(f"Scanning {league}...")
         matches = get_fixtures(league)
         if matches is None:
             api_failed_or_stale = True
             continue
+        if not matches:
+            continue
             
         ht, ft, dc = filter_picks(matches)
         
-        # Filter out matches already in history
+        # Filter out history
         ht = [p for p in ht if p["match"] not in picked_matches]
         ft = [p for p in ft if p["match"] not in picked_matches]
         dc = [p for p in dc if p["match"] not in picked_matches]
@@ -159,12 +176,13 @@ def generate_picks():
         all_ft.extend(ft)
         all_dc.extend(dc)
     
-    # Sort by Date, then Probability
+    print(f"📊 Found {len(all_ht)} HT, {len(all_ft)} FT, {len(all_dc)} DC candidates before date filtering.")
+    
+    # Sort
     all_ht.sort(key=lambda x: (x["date"], -x["prob"]))
     all_ft.sort(key=lambda x: (x["date"], -x["prob"]))
     all_dc.sort(key=lambda x: (x["date"], -x["prob"]))
     
-    # Find the earliest target date across all markets
     dates = [p["date"] for p in all_ht + all_ft + all_dc]
     target_date = min(dates) if dates else None
         
@@ -189,7 +207,6 @@ def generate_picks():
         if top_dc:
             message += "💎 <b>Top Double Chance (Safest)</b> 💎\n"
             for p in top_dc:
-                # Extract just the market part for display (e.g., "1X" or "X2")
                 market_type = p['market'].replace("Double Chance ", "")
                 message += f"⚽ {p['match']} ({p['league']})\n⏰ {p['time']} | <b>{market_type} @ {p['prob']}%</b>\n\n"
 
@@ -216,6 +233,7 @@ def generate_picks():
         if api_failed_or_stale:
             print("Skipping Telegram send. API failed or data is stale.")
         else:
+            print("No dates found for any matches. Sending Rest Day message.")
             rest_message = (
                 "🧠 <b>DAILY AI UPDATE</b> 🧠\n\n"
                 "⚠️ <b>No High-Value Picks Found.</b>\n\n"
