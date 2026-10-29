@@ -13,6 +13,7 @@ LEAGUES_TO_SCAN = ["turkey2", "germany2", "premier"]
 HISTORY_FILE = "picks_history.json"
 
 def get_fixtures(league_key):
+    """Fetches fixtures for a specific league with retry logic and stale data checks."""
     url = f"https://footballcharts-backend.onrender.com/api/v1/leagues/{league_key}/fixtures/"
     headers = {"Authorization": f"Bearer {FC_API_KEY}"}
     
@@ -46,6 +47,7 @@ def get_fixtures(league_key):
     return None 
 
 def filter_picks(matches):
+    """Filters matches based on strict probability criteria."""
     ht_candidates = []
     ft_candidates = []
     dc_candidates = []
@@ -120,20 +122,38 @@ def filter_picks(matches):
     return ht_candidates, ft_candidates, dc_candidates
 
 def send_telegram_message(text):
+    """Sends a formatted message to Telegram and returns True if successful."""
+    if not TELEGRAM_TOKEN or not TELEGRAM_CHAT_ID:
+        print("❌ TELEGRAM CREDENTIALS MISSING. Skipping send.")
+        return False
+
     url = f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/sendMessage"
-    payload = {"chat_id": TELEGRAM_CHAT_ID, "text": text, "parse_mode": "HTML", "disable_web_page_preview": True}
+    payload = {
+        "chat_id": TELEGRAM_CHAT_ID, 
+        "text": text, 
+        "parse_mode": "HTML", 
+        "disable_web_page_preview": True
+    }
     print("📤 Sending message to Telegram...")
     try:
         response = requests.post(url, json=payload, timeout=10)
         if not response.json().get("ok"):
             print(f"❌ TELEGRAM API ERROR: {response.json()}")
             return False
-        else:
-            print("✅ Message successfully sent to Telegram!")
-            return True
+        print("✅ Message successfully sent to Telegram!")
+        return True
     except Exception as e:
         print(f"❌ NETWORK ERROR: {e}")
         return False
+
+def get_monetization_block():
+    """Returns the standard promotional block for Telegram messages."""
+    return (
+        "🔥 <b>Ready to place your bets?</b>\n"
+        "Join 1win using our exclusive code to get the best odds!\n\n"
+        "👉 <a href='https://1win.ng/?p=q70f'>Click here to Register on 1win</a>\n"
+        "🎁 <b>Promo Code: <code>IGIOWO</code></b>\n"
+    )
 
 def generate_picks():
     print("🤖 Starting daily AI scan...")
@@ -141,7 +161,7 @@ def generate_picks():
     api_failed_or_stale = False
     today_date = datetime.now(timezone.utc).strftime('%Y-%m-%d')
     
-    # Load History and Prune old entries (older than 30 days)
+    # 1. Load and Prune History (Keep only last 30 days)
     picked_matches = set()
     history = []
     if os.path.exists(HISTORY_FILE):
@@ -149,14 +169,14 @@ def generate_picks():
             with open(HISTORY_FILE, "r") as f:
                 history_data = json.load(f)
                 cutoff_date = (datetime.now(timezone.utc) - timedelta(days=30)).strftime('%Y-%m-%d')
-                # Only keep matches from the last 30 days
                 history = [item for item in history_data if item.get("date", "1970-01-01") >= cutoff_date]
                 for item in history:
                     picked_matches.add(item.get("match"))
             print(f"📚 Loaded {len(picked_matches)} recently picked matches from history.")
         except Exception as e:
-            print(f"Could not load history: {e}")
+            print(f"⚠️ Could not load history: {e}")
     
+    # 2. Scan Leagues
     for league in LEAGUES_TO_SCAN:
         matches = get_fixtures(league)
         if matches is None:
@@ -167,14 +187,14 @@ def generate_picks():
             
         ht, ft, dc = filter_picks(matches)
         
-        # Filter out history
+        # Filter out matches already in history
         ht = [p for p in ht if p["match"] not in picked_matches]
         ft = [p for p in ft if p["match"] not in picked_matches]
         dc = [p for p in dc if p["match"] not in picked_matches]
         
-        for p in ht: p["league"] = league
-        for p in ft: p["league"] = league
-        for p in dc: p["league"] = league
+        for p in ht: p["league"] = league.capitalize()
+        for p in ft: p["league"] = league.capitalize()
+        for p in dc: p["league"] = league.capitalize()
             
         all_ht.extend(ht)
         all_ft.extend(ft)
@@ -182,7 +202,7 @@ def generate_picks():
     
     print(f"📊 Total filtered picks found: {len(all_ht)} HT, {len(all_ft)} FT, {len(all_dc)} DC.")
     
-    # Sort
+    # 3. Sort and Group by Earliest Date
     all_ht.sort(key=lambda x: (x["date"], -x["prob"]))
     all_ft.sort(key=lambda x: (x["date"], -x["prob"]))
     all_dc.sort(key=lambda x: (x["date"], -x["prob"]))
@@ -195,7 +215,7 @@ def generate_picks():
         top_ft = [p for p in all_ft if p["date"] == target_date][:3]
         top_dc = [p for p in all_dc if p["date"] == target_date][:3]
         
-        # Only send if there is at least 1 pick
+        # Ensure at least one pick exists
         if top_ht or top_ft or top_dc:
             header_title = f"🎯 <b>Daily AI Picks - {today_date}</b>" if target_date == today_date else f"🎯 <b>Early AI Picks for {target_date}</b>"
             message = f"{header_title}\n\n"
@@ -216,13 +236,9 @@ def generate_picks():
                     market_type = p['market'].replace("Double Chance ", "")
                     message += f"⚽ {p['match']} ({p['league']})\n⏰ {p['time']} | <b>{market_type} @ {p['prob']}%</b>\n\n"
 
-            # Monetization Block
-            message += "🔥 <b>Ready to place your bets?</b>\n"
-            message += "Join 1win using our exclusive code to get the best odds!\n\n"
-            message += f"👉 <a href='https://1win.ng/?p=q70f'>Click here to Register on 1win</a>\n"
-            message += "🎁 <b>Promo Code: <code>IGIOWO</code></b>\n"
+            message += get_monetization_block()
             
-            # Send Message and save to history ONLY IF successful
+            # Send and Save
             success = send_telegram_message(message)
             if success:
                 history.extend(top_ht)
@@ -232,20 +248,19 @@ def generate_picks():
                     json.dump(history, f, indent=4)
                 print("💾 History file updated successfully.")
         else:
-            print("⚠️ Target date found, but no matches met the threshold.")
+            print("⚠️ Target date found, but no matches met the strict threshold after filtering history.")
     else:
+        # No dates found at all
         if api_failed_or_stale:
             print("❌ Skipping Telegram send. API failed or data is stale.")
         else:
-            print("⚠️ No dates found for any matches. Sending Rest Day message.")
+            print("⚠️ No upcoming matches found in any league. Sending Rest Day message.")
             rest_message = (
                 "🧠 <b>DAILY AI UPDATE</b> 🧠\n\n"
                 "⚠️ <b>No High-Value Picks Found.</b>\n\n"
                 "Our AI scanned all upcoming fixtures and found no matches meeting our strict probability criteria. \n\n"
                 "💎 <b>Protecting your bankroll:</b> We never force bad bets.\n\n"
-                "🔥 <b>Be ready for the next drop:</b>\n"
-                f"👉 <a href='https://1win.ng/?p=q70f'>Register on 1win Here</a>\n"
-                "🎁 <b>Promo Code: <code>IGIOWO</code></b>"
+                + get_monetization_block()
             )
             send_telegram_message(rest_message)
 
