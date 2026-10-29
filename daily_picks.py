@@ -101,11 +101,23 @@ def send_telegram_message(text):
         print(f"❌ NETWORK ERROR: {e}")
 
 def generate_picks():
+def generate_picks():
     print("🤖 Starting daily AI scan...")
     all_ht_picks = []
     all_ft_picks = []
     api_failed_or_stale = False
     today_date = datetime.now(timezone.utc).strftime('%Y-%m-%d')
+    
+    # --- NEW: Load previously picked matches from history ---
+    picked_matches = set()
+    if os.path.exists(HISTORY_FILE):
+        try:
+            with open(HISTORY_FILE, "r") as f:
+                history_data = json.load(f)
+                for item in history_data:
+                    picked_matches.add(item.get("match"))
+        except Exception as e:
+            print(f"Could not load history: {e}")
     
     for league in LEAGUES_TO_SCAN:
         print(f"Scanning {league}...")
@@ -116,6 +128,11 @@ def generate_picks():
             continue
             
         ht_picks, ft_picks = filter_picks(matches)
+        
+        # --- NEW: Filter out matches that are already in the history ---
+        ht_picks = [p for p in ht_picks if p["match"] not in picked_matches]
+        ft_picks = [p for p in ft_picks if p["match"] not in picked_matches]
+        
         for p in ht_picks: p["league"] = league
         for p in ft_picks: p["league"] = league
             
@@ -126,7 +143,6 @@ def generate_picks():
     all_ht_picks.sort(key=lambda x: (x["date"], -x["prob"]))
     all_ft_picks.sort(key=lambda x: (x["date"], -x["prob"]))
     
-    # Determine the target date (the earliest date we have a pick for)
     target_date = None
     if all_ht_picks:
         target_date = all_ht_picks[0]["date"]
@@ -134,11 +150,9 @@ def generate_picks():
         target_date = all_ft_picks[0]["date"]
         
     if target_date:
-        # Filter ONLY for the target date, and take the top 3
         top_ht = [p for p in all_ht_picks if p["date"] == target_date][:3]
         top_ft = [p for p in all_ft_picks if p["date"] == target_date][:3]
         
-        # Adjust header based on whether the picks are for today or a future date
         if target_date == today_date:
             header_title = f"🎯 <b>Daily AI Picks - {today_date}</b>"
         else:
@@ -165,6 +179,60 @@ def generate_picks():
         message += "🎁 <b>Promo Code: <code>IGIOWO</code></b>\n"
         
         send_telegram_message(message)
+        
+        # --- NEW: Save ONLY the new picks to history ---
+        history = []
+        if os.path.exists(HISTORY_FILE):
+            try:
+                with open(HISTORY_FILE, "r") as f: history = json.load(f)
+            except: pass
+        
+        history.extend(top_ht)
+        history.extend(top_ft)
+        
+        with open(HISTORY_FILE, "w") as f: json.dump(history, f, indent=4)
+
+    else:
+        if api_failed_or_stale:
+            print("Skipping Telegram send. API failed or data is stale.")
+        else:
+            rest_message = (
+                "🧠 <b>DAILY AI UPDATE</b> 🧠\n\n"
+                "⚠️ <b>No High-Value Picks Found.</b>\n\n"
+                "Our AI scanned all upcoming fixtures and found no matches meeting our strict probability criteria. \n\n"
+                "💎 <b>Protecting your bankroll:</b> We never force bad bets. We only strike when the math gives us a massive edge.\n\n"
+                "🔥 <b>Be ready for the next drop:</b>\n"
+                f"👉 <a href='https://1win.ng/?p=q70f'>Register on 1win Here</a>\n"
+                "🎁 <b>Promo Code: <code>IGIOWO</code></b>"
+            )
+            send_telegram_message(rest_message)
+        
+        # --- NEW: Save ONLY the new picks to history ---
+        history = []
+        if os.path.exists(HISTORY_FILE):
+            try:
+                with open(HISTORY_FILE, "r") as f: history = json.load(f)
+            except: pass
+        
+        history.extend(top_ht)
+        history.extend(top_ft)
+        
+        with open(HISTORY_FILE, "w") as f: json.dump(history, f, indent=4)
+
+    else:
+        if api_failed_or_stale:
+            print("Skipping Telegram send. API failed or data is stale.")
+        else:
+            rest_message = (
+                "🧠 <b>DAILY AI UPDATE</b> 🧠\n\n"
+                "⚠️ <b>No High-Value Picks Found.</b>\n\n"
+                "Our AI scanned all upcoming fixtures and found no matches meeting our strict probability criteria. \n\n"
+                "💎 <b>Protecting your bankroll:</b> We never force bad bets. We only strike when the math gives us a massive edge.\n\n"
+                "🔥 <b>Be ready for the next drop:</b>\n"
+                f"👉 <a href='https://1win.ng/?p=q70f'>Register on 1win Here</a>\n"
+                "🎁 <b>Promo Code: <code>IGIOWO</code></b>"
+            )
+            send_telegram_message(rest_message)
         
         # Save History
         history = []
