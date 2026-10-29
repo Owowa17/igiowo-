@@ -53,7 +53,7 @@ def filter_picks(matches):
         model_preds = match.get("model_predictions") or {}
         dc_v2 = model_preds.get("dc_v2") or {}
         preds = dc_v2.get("calibrated") or dc_v2.get("raw") or {}
-        
+        print(f"DEBUG DATA for {match['home_team']}: {preds.keys()}")
         match_name = f"{match['home_team']} vs {match['away_team']}"
         match_time = match.get("time", "N/A")
         
