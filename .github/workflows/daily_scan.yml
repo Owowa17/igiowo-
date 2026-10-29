@@ -4,27 +4,25 @@ on:
   schedule:
     # 07:00 UTC is exactly 08:00 AM Nigeria Time (WAT)
     - cron: '0 7 * * *'
-  workflow_dispatch: # Allows you to run it manually from the Actions tab
+  workflow_dispatch:
 
-# Prevents multiple runs from fighting over the Git push
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: true
 
 permissions:
-  contents: write # Crucial: Allows the bot to save the history file
+  contents: write 
 
 jobs:
   build:
     runs-on: ubuntu-latest
-    # If the job hangs for more than 10 mins, cancel it to prevent GitHub Pages getting stuck
     timeout-minutes: 10 
     
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
         with:
-          fetch-depth: 0 # Crucial: Fetches full history so git rebase works perfectly
+          fetch-depth: 0 
 
       - name: Set up Python
         uses: actions/setup-python@v5
@@ -49,13 +47,15 @@ jobs:
           git config --local user.email "bot@igiowo.com"
           git add picks_history.json
           
-          # Check if the file actually changed
           if git diff --staged --quiet; then
             echo "No changes to picks_history.json. Skipping commit and push."
           else
             echo "Changes detected. Committing and pushing..."
             git commit -m "Update picks history"
+            
+            # THIS IS THE MAGIC LINE THAT WAS MISSING
             git pull --rebase origin main
+            
             git push origin main
             echo "History file successfully updated!"
           fi
