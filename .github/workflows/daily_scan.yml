@@ -17,6 +17,9 @@ permissions:
 jobs:
   build:
     runs-on: ubuntu-latest
+    # If the job hangs for more than 10 mins, cancel it to prevent GitHub Pages getting stuck
+    timeout-minutes: 10 
+    
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
@@ -45,11 +48,14 @@ jobs:
           git config --local user.name "IgiowoBot"
           git config --local user.email "bot@igiowo.com"
           git add picks_history.json
-          # Commit only if there are changes, otherwise just move on
-          git commit -m "Update picks history" || echo "No changes to commit"
           
-          # Pull the latest remote changes and rebase before pushing
-          git pull --rebase origin main
-          
-          # Push the changes. If this fails, the action will turn red so you know!
-          git push origin main
+          # Check if the file actually changed
+          if git diff --staged --quiet; then
+            echo "No changes to picks_history.json. Skipping commit and push."
+          else
+            echo "Changes detected. Committing and pushing..."
+            git commit -m "Update picks history"
+            git pull --rebase origin main
+            git push origin main
+            echo "History file successfully updated!"
+          fi
