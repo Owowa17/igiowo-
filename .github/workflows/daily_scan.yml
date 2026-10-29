@@ -20,12 +20,14 @@ jobs:
     
     steps:
       - name: Checkout repository
-        uses: actions/checkout@v4
+        # Updated to v5 to fix the Node.js 20 deprecation warning
+        uses: actions/checkout@v5
         with:
           fetch-depth: 0 
 
       - name: Set up Python
-        uses: actions/setup-python@v5
+        # Updated to v6 to fix the Node.js 20 deprecation warning
+        uses: actions/setup-python@v6
         with:
           python-version: '3.10'
 
@@ -53,7 +55,7 @@ jobs:
             echo "Changes detected. Committing and pushing..."
             git commit -m "Update picks history"
             
-            # THIS IS THE MAGIC LINE THAT WAS MISSING
+            # THIS IS THE MAGIC LINE THAT PREVENTS THE PUSH REJECTION
             git pull --rebase origin main
             
             git push origin main
