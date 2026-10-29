@@ -2,7 +2,7 @@ import os
 import requests
 import time
 import json
-from datetime import datetime, timezone
+from datetime import datetime, timezone, timedelta
 
 # --- CONFIGURATION ---
 FC_API_KEY = os.environ.get("FC_API_KEY")
@@ -61,22 +61,28 @@ def filter_picks(matches):
         dc_v2 = model_preds.get("dc_v2") or {}
         preds = dc_v2.get("calibrated") or dc_v2.get("raw") or {}
         
-        match_name = f"{match['home_team']} vs {match['away_team']}"
+        match_name = f"{match.get('home_team', 'Unknown')} vs {match.get('away_team', 'Unknown')}"
         match_time = match.get("time", "N/A")
         
         # --- HT Under 1.5 ---
         ht_over = preds.get("ht_over_1.5")
         if ht_over:
-            ht_under = (1.0 - float(ht_over)) * 100
-            if ht_under >= 70:
-                ht_candidates.append({"match": match_name, "time": match_time, "prob": round(ht_under, 1), "date": match_date, "market": "HT Under 1.5"})
+            try:
+                ht_under = (1.0 - float(ht_over)) * 100
+                if ht_under >= 70:
+                    ht_candidates.append({"match": match_name, "time": match_time, "prob": round(ht_under, 1), "date": match_date, "market": "HT Under 1.5"})
+            except ValueError:
+                pass
                 
         # --- FT Under 2.5 ---
         ft_over = preds.get("ft_over_2.5")
         if ft_over:
-            ft_under = (1.0 - float(ft_over)) * 100
-            if ft_under >= 65: 
-                ft_candidates.append({"match": match_name, "time": match_time, "prob": round(ft_under, 1), "date": match_date, "market": "FT Under 2.5"})
+            try:
+                ft_under = (1.0 - float(ft_over)) * 100
+                if ft_under >= 65: 
+                    ft_candidates.append({"match": match_name, "time": match_time, "prob": round(ft_under, 1), "date": match_date, "market": "FT Under 2.5"})
+            except ValueError:
+                pass
 
         # --- DOUBLE CHANCE (1X or X2) ---
         dc_1x = preds.get("dc_1x") or preds.get("1x")
@@ -87,20 +93,29 @@ def filter_picks(matches):
             p_draw = preds.get("ft_draw") or preds.get("draw") or preds.get("x")
             p_away = preds.get("ft_away_win") or preds.get("away_win") or preds.get("2")
             
-            if p_home and p_draw:
-                dc_1x = float(p_home) + float(p_draw)
-            if p_away and p_draw:
-                dc_x2 = float(p_away) + float(p_draw)
+            try:
+                if p_home and p_draw:
+                    dc_1x = float(p_home) + float(p_draw)
+                if p_away and p_draw:
+                    dc_x2 = float(p_away) + float(p_draw)
+            except ValueError:
+                pass
                 
         if dc_1x:
-            dc_1x_prob = float(dc_1x) * 100 if float(dc_1x) <= 1.0 else float(dc_1x)
-            if dc_1x_prob >= 80:
-                dc_candidates.append({"match": match_name, "time": match_time, "prob": round(dc_1x_prob, 1), "date": match_date, "market": "Double Chance (1X)"})
+            try:
+                dc_1x_prob = float(dc_1x) * 100 if float(dc_1x) <= 1.0 else float(dc_1x)
+                if dc_1x_prob >= 80:
+                    dc_candidates.append({"match": match_name, "time": match_time, "prob": round(dc_1x_prob, 1), "date": match_date, "market": "Double Chance (1X)"})
+            except ValueError:
+                pass
                 
         if dc_x2:
-            dc_x2_prob = float(dc_x2) * 100 if float(dc_x2) <= 1.0 else float(dc_x2)
-            if dc_x2_prob >= 80:
-                dc_candidates.append({"match": match_name, "time": match_time, "prob": round(dc_x2_prob, 1), "date": match_date, "market": "Double Chance (X2)"})
+            try:
+                dc_x2_prob = float(dc_x2) * 100 if float(dc_x2) <= 1.0 else float(dc_x2)
+                if dc_x2_prob >= 80:
+                    dc_candidates.append({"match": match_name, "time": match_time, "prob": round(dc_x2_prob, 1), "date": match_date, "market": "Double Chance (X2)"})
+            except ValueError:
+                pass
                 
     return ht_candidates, ft_candidates, dc_candidates
 
@@ -112,10 +127,13 @@ def send_telegram_message(text):
         response = requests.post(url, json=payload, timeout=10)
         if not response.json().get("ok"):
             print(f"❌ TELEGRAM API ERROR: {response.json()}")
+            return False
         else:
             print("✅ Message successfully sent to Telegram!")
+            return True
     except Exception as e:
         print(f"❌ NETWORK ERROR: {e}")
+        return False
 
 def generate_picks():
     print("🤖 Starting daily AI scan...")
@@ -123,15 +141,19 @@ def generate_picks():
     api_failed_or_stale = False
     today_date = datetime.now(timezone.utc).strftime('%Y-%m-%d')
     
-    # Load History
+    # Load History and Prune old entries (older than 30 days)
     picked_matches = set()
+    history = []
     if os.path.exists(HISTORY_FILE):
         try:
             with open(HISTORY_FILE, "r") as f:
                 history_data = json.load(f)
-                for item in history_data:
+                cutoff_date = (datetime.now(timezone.utc) - timedelta(days=30)).strftime('%Y-%m-%d')
+                # Only keep matches from the last 30 days
+                history = [item for item in history_data if item.get("date", "1970-01-01") >= cutoff_date]
+                for item in history:
                     picked_matches.add(item.get("match"))
-            print(f"📚 Loaded {len(picked_matches)} previously picked matches from history.")
+            print(f"📚 Loaded {len(picked_matches)} recently picked matches from history.")
         except Exception as e:
             print(f"Could not load history: {e}")
     
@@ -173,44 +195,44 @@ def generate_picks():
         top_ft = [p for p in all_ft if p["date"] == target_date][:3]
         top_dc = [p for p in all_dc if p["date"] == target_date][:3]
         
-        header_title = f"🎯 <b>Daily AI Picks - {today_date}</b>" if target_date == today_date else f"🎯 <b>Early AI Picks for {target_date}</b>"
-        message = f"{header_title}\n\n"
-        
-        if top_ht:
-            message += "⚡ <b>Top HT Under 1.5</b> ⚡\n"
-            for p in top_ht:
-                message += f"⚽ {p['match']} ({p['league']})\n⏰ {p['time']} | <b>{p['prob']}%</b>\n\n"
-                
-        if top_ft:
-            message += "🛡️ <b>Top FT Under 2.5</b> 🛡️\n"
-            for p in top_ft:
-                message += f"⚽ {p['match']} ({p['league']})\n⏰ {p['time']} | <b>{p['prob']}%</b>\n\n"
+        # Only send if there is at least 1 pick
+        if top_ht or top_ft or top_dc:
+            header_title = f"🎯 <b>Daily AI Picks - {today_date}</b>" if target_date == today_date else f"🎯 <b>Early AI Picks for {target_date}</b>"
+            message = f"{header_title}\n\n"
+            
+            if top_ht:
+                message += "⚡ <b>Top HT Under 1.5</b> ⚡\n"
+                for p in top_ht:
+                    message += f"⚽ {p['match']} ({p['league']})\n⏰ {p['time']} | <b>{p['prob']}%</b>\n\n"
+                    
+            if top_ft:
+                message += "🛡️ <b>Top FT Under 2.5</b> 🛡️\n"
+                for p in top_ft:
+                    message += f"⚽ {p['match']} ({p['league']})\n⏰ {p['time']} | <b>{p['prob']}%</b>\n\n"
 
-        if top_dc:
-            message += "💎 <b>Top Double Chance (Safest)</b> 💎\n"
-            for p in top_dc:
-                market_type = p['market'].replace("Double Chance ", "")
-                message += f"⚽ {p['match']} ({p['league']})\n⏰ {p['time']} | <b>{market_type} @ {p['prob']}%</b>\n\n"
+            if top_dc:
+                message += "💎 <b>Top Double Chance (Safest)</b> 💎\n"
+                for p in top_dc:
+                    market_type = p['market'].replace("Double Chance ", "")
+                    message += f"⚽ {p['match']} ({p['league']})\n⏰ {p['time']} | <b>{market_type} @ {p['prob']}%</b>\n\n"
 
-        # Monetization Block
-        message += "🔥 <b>Ready to place your bets?</b>\n"
-        message += "Join 1win using our exclusive code to get the best odds!\n\n"
-        message += f"👉 <a href='https://1win.ng/?p=q70f'>Click here to Register on 1win</a>\n"
-        message += "🎁 <b>Promo Code: <code>IGIOWO</code></b>\n"
-        
-        send_telegram_message(message)
-        
-        # Save to History
-        history = []
-        if os.path.exists(HISTORY_FILE):
-            try:
-                with open(HISTORY_FILE, "r") as f: history = json.load(f)
-            except: pass
-        history.extend(top_ht)
-        history.extend(top_ft)
-        history.extend(top_dc)
-        with open(HISTORY_FILE, "w") as f: json.dump(history, f, indent=4)
-
+            # Monetization Block
+            message += "🔥 <b>Ready to place your bets?</b>\n"
+            message += "Join 1win using our exclusive code to get the best odds!\n\n"
+            message += f"👉 <a href='https://1win.ng/?p=q70f'>Click here to Register on 1win</a>\n"
+            message += "🎁 <b>Promo Code: <code>IGIOWO</code></b>\n"
+            
+            # Send Message and save to history ONLY IF successful
+            success = send_telegram_message(message)
+            if success:
+                history.extend(top_ht)
+                history.extend(top_ft)
+                history.extend(top_dc)
+                with open(HISTORY_FILE, "w") as f: 
+                    json.dump(history, f, indent=4)
+                print("💾 History file updated successfully.")
+        else:
+            print("⚠️ Target date found, but no matches met the threshold.")
     else:
         if api_failed_or_stale:
             print("❌ Skipping Telegram send. API failed or data is stale.")
