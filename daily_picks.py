@@ -9,7 +9,17 @@ FC_API_KEY = os.environ.get("FC_API_KEY")
 TELEGRAM_TOKEN = os.environ.get("TELEGRAM_TOKEN")
 TELEGRAM_CHAT_ID = os.environ.get("TELEGRAM_CHAT_ID")
 
-LEAGUES_TO_SCAN = ["turkey2", "germany2", "premier"]
+# Expanded to 8 Leagues. Ensure these keys match your API's exact naming
+LEAGUES_TO_SCAN = [
+    "premier",      # English Premier League
+    "germany2",     # German 2. Bundesliga
+    "turkey2",      # Turkish 2nd Division
+    "laliga",       # Spanish La Liga
+    "seriea",       # Italian Serie A
+    "ligue1",       # French Ligue 1
+    "championship", # English Championship
+    "eredivisie"    # Dutch Eredivisie
+]
 HISTORY_FILE = "picks_history.json"
 
 def get_fixtures(league_key):
@@ -179,6 +189,10 @@ def generate_picks():
     # 2. Scan Leagues
     for league in LEAGUES_TO_SCAN:
         matches = get_fixtures(league)
+        
+        # Add a 1-second delay between leagues to prevent API rate limiting (HTTP 429)
+        time.sleep(1)
+        
         if matches is None:
             api_failed_or_stale = True
             continue
@@ -211,6 +225,7 @@ def generate_picks():
     target_date = min(dates) if dates else None
         
     if target_date:
+        # Grabs the top 3 across ALL 8 leagues based on highest probability
         top_ht = [p for p in all_ht if p["date"] == target_date][:3]
         top_ft = [p for p in all_ft if p["date"] == target_date][:3]
         top_dc = [p for p in all_dc if p["date"] == target_date][:3]
@@ -258,7 +273,7 @@ def generate_picks():
             rest_message = (
                 "🧠 <b>DAILY AI UPDATE</b> 🧠\n\n"
                 "⚠️ <b>No High-Value Picks Found.</b>\n\n"
-                "Our AI scanned all upcoming fixtures and found no matches meeting our strict probability criteria. \n\n"
+                "Our AI scanned 8 leagues and found no matches meeting our strict probability criteria. \n\n"
                 "💎 <b>Protecting your bankroll:</b> We never force bad bets.\n\n"
                 + get_monetization_block()
             )
