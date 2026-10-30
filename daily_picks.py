@@ -10,7 +10,6 @@ FC_API_KEY = os.environ.get("FC_API_KEY")
 TELEGRAM_TOKEN = os.environ.get("TELEGRAM_TOKEN")
 TELEGRAM_CHAT_ID = os.environ.get("TELEGRAM_CHAT_ID")
 
-# Expanded to 8 Leagues. Ensure these keys match your API's exact naming
 LEAGUES_TO_SCAN = [
     "premier", "germany2", "turkey2", "laliga", "seriea", "ligue1", "championship", "eredivisie"
 ]
@@ -59,12 +58,16 @@ def filter_picks(matches):
     for match in matches:
         raw_date = match.get("date") or match.get("match_date") or match.get("start_time") or match.get("time") or ""
         
-        # --- FIX 1: Date Sanitization (Prevents the 2026 Glitch) ---
+        # --- ULTIMATE DATE FIX ---
         try:
+            # Try to parse the raw date from the API
             parsed_date = datetime.strptime(str(raw_date)[:10], "%Y-%m-%d")
-            # If API returns a date in the far future (e.g., 2026), force it to today
-            if parsed_date.year > datetime.now().year + 1:
-                match_date = datetime.now(timezone.utc).strftime("%Y-%m-%d")
+            today_real = datetime.now(timezone.utc)
+            
+            # If the API sends a date that is more than 2 days in the future (like 2026), 
+            # or in the past, we override it to today's real date.
+            if abs((parsed_date - today_real).days) > 2:
+                match_date = today_real.strftime("%Y-%m-%d")
             else:
                 match_date = parsed_date.strftime("%Y-%m-%d")
         except:
@@ -258,10 +261,8 @@ def generate_picks():
     else:
         if api_failed_or_stale:
             print("❌ Skipping Telegram send. API failed or data is stale.")
-            # FIX 3: Force the script to exit with an error code so GitHub shows a RED X
             sys.exit(1) 
         else:
-            # --- FIX 2: Stay silent if there are no new picks ---
             print("ℹ️ No new matches met the criteria today. Staying silent to avoid spamming the channel.")
 
 if __name__ == "__main__":
