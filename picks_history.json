@@ -2,26 +2,24 @@
     {
         "match": "Coventry vs Sunderland",
         "time": "15:00",
-        "prob": 83.1,
-        "league": "premier"
-    },
-    {
-        "match": "Coventry vs Sunderland",
-        "time": "15:00",
-        "prob": 83.1,
-        "league": "premier"
-    },
-    {
-        "match": "Coventry vs Sunderland",
-        "time": "15:00",
-        "prob": 83.1,
-        "league": "premier"
-    },
-    {
-        "match": "Coventry vs Sunderland",
-        "time": "15:00",
         "prob": 70.6,
         "date": "2026-10-31",
         "league": "premier"
+    },
+    {
+        "match": "Everton vs Coventry",
+        "time": "20:00",
+        "prob": 83.0,
+        "date": "2026-11-06",
+        "market": "HT Under 1.5",
+        "league": "Premier"
+    },
+    {
+        "match": "Sariyer vs Igdir FK",
+        "time": "17:00",
+        "prob": 70.6,
+        "date": "2026-11-06",
+        "market": "HT Under 1.5",
+        "league": "Turkey2"
     }
 ]
