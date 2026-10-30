@@ -92,6 +92,9 @@ def check_bet_result(market, scores):
     elif market == "FT Under 2.5":
         return "WON" if ft_total < 2.5 else "LOST"
         
+        elif market == "FT Under 3.5":
+    return "WON" if ft_total < 3.5 else "LOST"
+        
     elif "Double Chance (1X)" in market:
         return "WON" if scores["ft_home"] >= scores["ft_away"] else "LOST"
         
