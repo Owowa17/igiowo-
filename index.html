@@ -10,6 +10,17 @@
   .header { background: #D4AF37; padding: 20px; border-radius: 12px; text-align: center; margin-bottom: 16px; }
   .header h1 { color: #1B1B1B; font-size: 24px; }
   .header p { color: #1B1B1B; font-size: 12px; margin-top: 6px; opacity: 0.7; }
+  
+  /* 🚀 AFFILIATE BANNER STYLES */
+  .affiliate-banner { background: linear-gradient(135deg, #FF4B4B, #FF8C00); border-radius: 12px; padding: 20px; margin-bottom: 16px; text-align: center; box-shadow: 0 8px 16px rgba(0,0,0,0.3); }
+  .affiliate-banner h3 { color: white; margin-top: 0; font-size: 1.1rem; font-weight: bold; text-transform: uppercase; letter-spacing: 1px; margin-bottom: 8px; }
+  .affiliate-banner p { color: white; margin-bottom: 15px; font-size: 0.9rem; }
+  .affiliate-btn { display: inline-block; background-color: #FFFFFF; color: #FF4B4B; font-weight: bold; padding: 12px 30px; border-radius: 50px; text-decoration: none; font-size: 1rem; margin-bottom: 10px; box-shadow: 0 4px 6px rgba(0,0,0,0.2); transition: transform 0.2s; }
+  .affiliate-btn:active { transform: scale(0.95); }
+  .promo-code { color: white; font-size: 0.95rem; margin-top: 5px; }
+  .promo-code span { background-color: rgba(255,255,255,0.2); padding: 4px 10px; border-radius: 5px; font-family: monospace; font-size: 1.1rem; border: 1px dashed white; letter-spacing: 2px; }
+  .telegram-btn { display: block; text-align: center; background-color: #0088cc; color: white; font-weight: bold; padding: 12px; border-radius: 10px; text-decoration: none; font-size: 1rem; margin-bottom: 16px; box-shadow: 0 4px 6px rgba(0,0,0,0.2); }
+  
   .tabs { display: flex; gap: 8px; margin-bottom: 16px; }
   .tab { flex: 1; padding: 12px; border-radius: 10px; background: rgba(251, 248, 239, 0.15); color: #FBF8EF; font-weight: 600; font-size: 14px; text-align: center; cursor: pointer; border: none; }
   .tab.active { background: #FBF8EF; color: #0B3D2E; }
@@ -66,6 +77,26 @@
     <h1>⚽ Igiowo</h1>
     <p>Multi-Market Prediction Dashboard</p>
   </div>
+
+  <!-- 🚀 AFFILIATE BANNER START -->
+  <div class="affiliate-banner">
+      <h3>🔥 Ready to place today's bets?</h3>
+      <p>Join 1win using our exclusive code to get the best odds!</p>
+      <a href="https://1win.ng/?p=q70f" target="_blank" class="affiliate-btn">
+          👉 Register on 1win Here
+      </a>
+      <div class="promo-code">
+          🎁 Promo Code: <span>IGIOWO</span>
+      </div>
+  </div>
+  <!-- 🚀 AFFILIATE BANNER END -->
+
+  <!-- 📢 TELEGRAM BUTTON START -->
+  <!-- Replace the href below with your actual Telegram channel link -->
+  <a href="https://t.me/YOUR_TELEGRAM_LINK" target="_blank" class="telegram-btn">
+      📢 Join our Telegram for Daily Picks
+  </a>
+  <!-- 📢 TELEGRAM BUTTON END -->
 
   <div class="tabs">
     <button class="tab active" id="tabToday" onclick="switchTab('today')">Today</button>
@@ -319,4 +350,4 @@
     setInterval(loadData, 120000);
   </script>
 </body>
- </html>
+   </html>
