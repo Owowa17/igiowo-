@@ -16,7 +16,6 @@ LEAGUES_TO_SCAN = [
 HISTORY_FILE = "picks_history.json"
 
 def get_fixtures(league_key):
-    """Fetches fixtures for a specific league with retry logic and stale data checks."""
     url = f"https://footballcharts-backend.onrender.com/api/v1/leagues/{league_key}/fixtures/"
     headers = {"Authorization": f"Bearer {FC_API_KEY}"}
     
@@ -54,20 +53,16 @@ def filter_picks(matches):
     ht_candidates = []
     ft_candidates = []
     dc_candidates = []
+    u35_candidates = [] # New list for Under 3.5
     
     for match in matches:
         raw_date = match.get("date") or match.get("match_date") or match.get("start_time") or match.get("time") or ""
         
-        # --- ULTIMATE DATE FIX ---
+        # --- DATE FIX ---
         try:
-            # Try to parse the raw date from the API
             parsed_date = datetime.strptime(str(raw_date)[:10], "%Y-%m-%d")
-            today_real = datetime.now(timezone.utc)
-            
-            # If the API sends a date that is more than 2 days in the future (like 2026), 
-            # or in the past, we override it to today's real date.
-            if abs((parsed_date - today_real).days) > 2:
-                match_date = today_real.strftime("%Y-%m-%d")
+            if abs((parsed_date - datetime.now(timezone.utc)).days) > 2:
+                match_date = datetime.now(timezone.utc).strftime("%Y-%m-%d")
             else:
                 match_date = parsed_date.strftime("%Y-%m-%d")
         except:
@@ -99,15 +94,16 @@ def filter_picks(matches):
                     ft_candidates.append({"match": match_name, "time": match_time, "prob": round(ft_under, 1), "date": match_date, "market": "FT Under 2.5"})
             except ValueError:
                 pass
-                # --- FT Under 3.5 ---
-ft_over_35 = preds.get("ft_over_3.5")
-if ft_over_35:
-    try:
-        ft_under_35 = (1.0 - float(ft_over_35)) * 100
-        if ft_under_35 >= 75: # Higher threshold for safety
-            u35_candidates.append({"match": match_name, "time": match_time, "prob": round(ft_under_35, 1), "date": match_date, "market": "FT Under 3.5"})
-    except ValueError:
-        pass
+
+        # --- FT Under 3.5 ---
+        ft_over_35 = preds.get("ft_over_3.5")
+        if ft_over_35:
+            try:
+                ft_under_35 = (1.0 - float(ft_over_35)) * 100
+                if ft_under_35 >= 75: # Higher threshold for U3.5
+                    u35_candidates.append({"match": match_name, "time": match_time, "prob": round(ft_under_35, 1), "date": match_date, "market": "FT Under 3.5"})
+            except ValueError:
+                pass
 
         # --- DOUBLE CHANCE (1X or X2) ---
         dc_1x = preds.get("dc_1x") or preds.get("1x")
@@ -142,21 +138,16 @@ if ft_over_35:
             except ValueError:
                 pass
                 
-    return ht_candidates, ft_candidates, dc_candidates
+    return ht_candidates, ft_candidates, dc_candidates, u35_candidates
 
 def send_telegram_message(text):
-    """Sends a formatted message to Telegram and returns True if successful."""
     if not TELEGRAM_TOKEN or not TELEGRAM_CHAT_ID:
         print("❌ TELEGRAM CREDENTIALS MISSING. Skipping send.")
         return False
 
     url = f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/sendMessage"
-    payload = {
-        "chat_id": TELEGRAM_CHAT_ID, 
-        "text": text, 
-        "parse_mode": "HTML", 
-        "disable_web_page_preview": True
-    }
+    payload = {"chat_id": TELEGRAM_CHAT_ID, "text": text, "parse_mode": "HTML", "disable_web_page_preview": True}
+    
     print("📤 Sending message to Telegram...")
     try:
         response = requests.post(url, json=payload, timeout=15)
@@ -171,7 +162,7 @@ def send_telegram_message(text):
 
 def generate_picks():
     print("🤖 Starting daily AI scan...")
-    all_ht, all_ft, all_dc = [], [], []
+    all_ht, all_ft, all_dc, all_u35 = [], [], [], []
     api_failed_or_stale = False
     today_date = datetime.now(timezone.utc).strftime('%Y-%m-%d')
     
@@ -201,34 +192,39 @@ def generate_picks():
         if not matches:
             continue
             
-        ht, ft, dc = filter_picks(matches)
+        ht, ft, dc, u35 = filter_picks(matches)
         
         ht = [p for p in ht if p["match"] not in picked_matches]
         ft = [p for p in ft if p["match"] not in picked_matches]
         dc = [p for p in dc if p["match"] not in picked_matches]
+        u35 = [p for p in u35 if p["match"] not in picked_matches]
         
         for p in ht: p["league"] = league.capitalize()
         for p in ft: p["league"] = league.capitalize()
         for p in dc: p["league"] = league.capitalize()
+        for p in u35: p["league"] = league.capitalize()
             
         all_ht.extend(ht)
         all_ft.extend(ft)
         all_dc.extend(dc)
+        all_u35.extend(u35)
     
-    print(f"📊 Total filtered picks found: {len(all_ht)} HT, {len(all_ft)} FT, {len(all_dc)} DC.")
+    print(f"📊 Total filtered picks found: {len(all_ht)} HT, {len(all_ft)} FT, {len(all_dc)} DC, {len(all_u35)} U3.5.")
     
     # 3. Sort and Group by Earliest Date
     all_ht.sort(key=lambda x: (x["date"], -x["prob"]))
     all_ft.sort(key=lambda x: (x["date"], -x["prob"]))
     all_dc.sort(key=lambda x: (x["date"], -x["prob"]))
+    all_u35.sort(key=lambda x: (x["date"], -x["prob"]))
     
-    dates = [p["date"] for p in all_ht + all_ft + all_dc]
+    dates = [p["date"] for p in all_ht + all_ft + all_dc + all_u35]
     target_date = min(dates) if dates else None
         
-    if target_date and (all_ht or all_ft or all_dc):
+    if target_date and (all_ht or all_ft or all_dc or all_u35):
         top_ht = [p for p in all_ht if p["date"] == target_date][:3]
         top_ft = [p for p in all_ft if p["date"] == target_date][:3]
         top_dc = [p for p in all_dc if p["date"] == target_date][:3]
+        top_u35 = [p for p in all_u35 if p["date"] == target_date][:3]
         
         header_title = f"🎯 <b>Daily AI Picks - {today_date}</b>" if target_date == today_date else f"🎯 <b>Early AI Picks for {target_date}</b>"
         message = f"{header_title}\n\n"
@@ -245,9 +241,15 @@ def generate_picks():
             for p in top_ft:
                 message += f"⚽ {p['match']} ({p['league']})\n⏰ {p['time']} | <b>{p['prob']}%</b>\n\n"
 
+        if top_u35:
+            title = "Top Pick" if len(top_u35) == 1 else f"Top {len(top_u35)}"
+            message += f"💎 <b>{title} FT Under 3.5</b> 💎\n"
+            for p in top_u35:
+                message += f"⚽ {p['match']} ({p['league']})\n⏰ {p['time']} | <b>{p['prob']}%</b>\n\n"
+
         if top_dc:
             title = "Top Pick" if len(top_dc) == 1 else f"Top {len(top_dc)}"
-            message += f"💎 <b>{title} Double Chance (Safest)</b> 💎\n"
+            message += f"🔥 <b>{title} Double Chance (Safest)</b> 🔥\n"
             for p in top_dc:
                 market_type = p['market'].replace("Double Chance ", "")
                 message += f"⚽ {p['match']} ({p['league']})\n⏰ {p['time']} | <b>{market_type} @ {p['prob']}%</b>\n\n"
@@ -263,6 +265,7 @@ def generate_picks():
             history.extend(top_ht)
             history.extend(top_ft)
             history.extend(top_dc)
+            history.extend(top_u35)
             with open(HISTORY_FILE, "w") as f: 
                 json.dump(history, f, indent=4)
             print("💾 History file updated successfully.")
