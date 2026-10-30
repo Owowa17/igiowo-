@@ -36,6 +36,13 @@
   .card.u25 { border-left-color: #7E22CE; background: #FAF5FF; }
   .card.u25 .prob-fill { background: linear-gradient(90deg, #7E22CE, #D4AF37); }
   .card.u25 .prob-text { color: #7E22CE; }
+  
+  /* 🛡️ U3.5 STYLING */
+  .card.u35 { border-left-color: #1B5E20; background: #F1F7F3; }
+  .card.u35 .prob-fill { background: linear-gradient(90deg, #1B5E20, #D4AF37); }
+  .card.u35 .prob-text { color: #1B5E20; }
+  .badge-u35 { background: #1B5E20; color: #FFFFFF; }
+
   .card.win { border-left-color: #1B5E20; }
   .card.loss { border-left-color: #B71C1C; }
   .card.void { border-left-color: #999; opacity: 0.7; }
@@ -67,7 +74,7 @@
   .error { background: #FDE2E2; color: #B71C1C; padding: 20px; border-radius: 10px; text-align: center; }
   .empty { text-align: center; color: #FBF8EF; padding: 30px; font-size: 14px; opacity: 0.8; }
   .hidden { display: none; }
-  .legend { display: flex; gap: 12px; justify-content: center; margin-bottom: 12px; font-size: 11px; color: #FBF8EF; opacity: 0.85; }
+  .legend { display: flex; gap: 12px; justify-content: center; margin-bottom: 12px; font-size: 11px; color: #FBF8EF; opacity: 0.85; flex-wrap: wrap; }
   .legend-dot { display: inline-block; width: 10px; height: 10px; border-radius: 50%; margin-right: 4px; vertical-align: middle; }
 </style>
 </head>
@@ -100,6 +107,7 @@
   <div class="legend">
     <span><span class="legend-dot" style="background:#D4AF37"></span>HT Under 1.5</span>
     <span><span class="legend-dot" style="background:#7E22CE"></span>FT Under 2.5</span>
+    <span><span class="legend-dot" style="background:#1B5E20"></span>FT Under 3.5</span>
   </div>
 
   <div id="todayView">
@@ -148,19 +156,19 @@
         const seen = new Set();
         
         const today = new Date();
-        const currentYear = today.getFullYear();
 
         rawData.forEach(pick => {
           if (!pick.match || !pick.date) return;
           
-          // 🚨 FIX: Safely handle missing market (default to HT Under 1.5)
+          // 🚨 DYNAMIC MARKET PARSING
           const marketString = pick.market || "HT Under 1.5";
-          const market = marketString.includes("2.5") ? "u25" : "u15";
+          let market = "u15";
+          if (marketString.includes("2.5")) market = "u25";
+          if (marketString.includes("3.5")) market = "u35";
           
-          // 🚨 FIX: Fix the 2026 date glitch for the website display
+          // 🚨 DATE FIX
           let pickDate = pick.date;
           if (pickDate.startsWith("2026") || pickDate.startsWith("2025")) {
-             // If the JSON has a future year, we force it to display as today
              pickDate = today.toISOString().split('T')[0];
           }
           
@@ -173,26 +181,16 @@
           if (result === "PENDING" && !seen.has(dedupKey)) {
             seen.add(dedupKey);
             pending.push({ 
-                date: pickDate, 
-                match: pick.match, 
-                league: pick.league || "Unknown", 
-                kickoff: kickoff, 
-                prob: prob, 
-                notes: "", 
-                market: market 
+                date: pickDate, match: pick.match, league: pick.league || "Unknown", 
+                kickoff: kickoff, prob: prob, notes: "", market: market 
             });
           }
           
           if (result === "WON" || result === "LOST") {
             completed.push({ 
-                date: pickDate, 
-                match: pick.match, 
-                league: pick.league || "Unknown", 
-                kickoff: kickoff, 
-                prob: prob, 
-                result: result === "WON" ? "Win" : "Loss", 
-                notes: "", 
-                market: market 
+                date: pickDate, match: pick.match, league: pick.league || "Unknown", 
+                kickoff: kickoff, prob: prob, 
+                result: result === "WON" ? "Win" : "Loss", notes: "", market: market 
             });
           }
         });
@@ -215,9 +213,22 @@
       } catch(e) {}
       
       const isU25 = p.market === "u25";
-      const cardClass = isU25 ? "u25" : (isToday ? "today" : "");
-      const badge = isU25 ? '<span class="market-badge badge-u25">📉 FT U2.5</span>' : '<span class="market-badge badge-u15">HT U1.5</span>';
-      const label = isU25 ? "FT U2.5" : "HT U1.5";
+      const isU35 = p.market === "u35";
+      
+      // Determine Styling
+      let cardClass = isToday ? "today" : "";
+      let badge = '<span class="market-badge badge-u15">HT U1.5</span>';
+      let label = "HT U1.5";
+      
+      if (isU25) {
+          cardClass = "u25";
+          badge = '<span class="market-badge badge-u25">📉 FT U2.5</span>';
+          label = "FT U2.5";
+      } else if (isU35) {
+          cardClass = "u35";
+          badge = '<span class="market-badge badge-u35">🛡️ FT U3.5</span>';
+          label = "FT U3.5";
+      }
 
       let html = `<div class="card ${cardClass}">
         <div class="match">${p.match}</div>
@@ -264,12 +275,14 @@
       const tomorrowCount = groups[tomorrowKey] ? groups[tomorrowKey].picks.length : 0;
       const u15Count = pending.filter(p => p.market === "u15").length;
       const u25Count = pending.filter(p => p.market === "u25").length;
+      const u35Count = pending.filter(p => p.market === "u35").length;
 
       let html = `<div class="summary-bar">
         <div class="summary-item"><div class="summary-num">${todayCount}</div><div class="summary-label">Today</div></div>
         <div class="summary-item"><div class="summary-num">${tomorrowCount}</div><div class="summary-label">Tomorrow</div></div>
         <div class="summary-item"><div class="summary-num">${u15Count}</div><div class="summary-label">HT U1.5</div></div>
         <div class="summary-item"><div class="summary-num">${u25Count}</div><div class="summary-label">FT U2.5</div></div>
+        <div class="summary-item"><div class="summary-num">${u35Count}</div><div class="summary-label">FT U3.5</div></div>
       </div>`;
 
       if (pending.length === 0) {
@@ -316,6 +329,7 @@
 
       const u15 = filtered.filter(r => r.market === "u15");
       const u25 = filtered.filter(r => r.market === "u25");
+      const u35 = filtered.filter(r => r.market === "u35");
 
       function stats(arr) {
         const w = arr.filter(r => r.result === "Win").length;
@@ -326,6 +340,7 @@
 
       const s15 = stats(u15);
       const s25 = stats(u25);
+      const s35 = stats(u35);
 
       let html = "";
 
@@ -354,18 +369,15 @@
           </div>`;
         }
 
-        const sortedByDate = filtered.slice().sort((a, b) => new Date(b.date) - new Date(a.date));
-        html += `<div style="margin-top:20px;"><div class="date-header"><span>Recent Results</span><span class="date-count">${sortedByDate.length}</span></div>`;
-        sortedByDate.forEach(c => { html += renderCard(c, false, true); });
-        html += `</div>`;
-      }
+        if (s35.total > 0) {
+          html += `<div class="stats" style="background:#F1F7F3;">
+            <h2 style="color:#1B5E20;">🛡️ FT Under 3.5 Track Record</h2>
+            <div class="stat-row"><span class="stat-label">Total Settled</span><span class="stat-value" style="color:#1B5E20">${s35.total}</span></div>
+            <div class="stat-row"><span class="stat-label">Wins</span><span class="stat-value" style="color:#1B5E20">${s35.wins}</span></div>
+            <div class="stat-row"><span class="stat-label">Losses</span><span class="stat-value" style="color:#B71C1C">${s35.losses}</span></div>
+            <div class="stat-row"><span class="stat-label">Hit Rate</span><span class="stat-value" style="color:#1B5E20">${s35.hit}%</span></div>
+            <div class="hit-bar"><div class="hit-fill" style="background:linear-gradient(90deg,#1B5E20,#D4AF37);width:${s35.hit}%"></div></div>
+          </div>`;
+        }
 
-      document.getElementById('historyContent').className = "";
-      document.getElementById('historyContent').innerHTML = html;
-    }
-
-    loadData();
-    setInterval(loadData, 60000);
-  </script>
-</body>
- </html>
+        const sortedByDate = filtered.slice().sort((a, b) => new Date(b.date) - new Dat
