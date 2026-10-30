@@ -92,7 +92,6 @@
   <!-- 🚀 AFFILIATE BANNER END -->
 
   <!-- 📢 TELEGRAM BUTTON START -->
-  <!-- Replace the href below with your actual Telegram channel link -->
   <a href="https://t.me/IgiowoHQ" target="_blank" class="telegram-btn">
       📢 Join our Telegram for Daily Picks
   </a>
@@ -122,8 +121,8 @@
   </div>
 
   <script>
-    const SHEET_ID = "1Vx5V6paYAMivmjDu4tbt3u0x-W7z37W8R1ZqswNulys";
-    const SHEET_NAME = "Daily prediction";
+    // 🚀 FIX: Point to your raw JSON file on GitHub
+    const JSON_URL = "https://raw.githubusercontent.com/Owowa17/igiowo-/main/picks_history.json";
     let allData = [];
     let currentFilter = "all";
 
@@ -143,57 +142,71 @@
       renderHistory();
     }
 
-    function detectMarket(notes, model) {
-      const n = ((notes || "") + " " + (model || "")).toLowerCase();
-      if (n.includes("ft-u25") || n.includes("ft u2.5") || n.includes("ftu25") || n.includes("u25") || n.includes("under 2.5")) return "u25";
-      return "u15";
-    }
-
     async function loadData() {
       try {
-        const url = `https://docs.google.com/spreadsheets/d/${SHEET_ID}/gviz/tq?tqx=out:json&sheet=${encodeURIComponent(SHEET_NAME)}`;
-        const res = await fetch(url);
-        const text = await res.text();
-        const json = JSON.parse(text.substring(47).slice(0, -2));
-        const rows = json.table.rows;
-
+        const response = await fetch(JSON_URL + "?t=" + new Date().getTime());
+        if (!response.ok) throw new Error("Could not load data");
+        
+        const rawData = await response.json();
+        
         let pending = [];
         let completed = [];
         const seen = new Set();
 
-        rows.forEach(r => {
-          if (!r.c) return;
-          const get = i => r.c[i] ? (r.c[i].v || r.c[i].f || "") : "";
-          const date = get(0);
-          const match = get(1);
-          const league = get(2);
-          const kickoff = get(3);
-          const prob = parseFloat(get(4)) || 0;
-          const status = get(8);
-          const result = get(9);
-          const notes = get(10);
-          const model = get(13);
-          if (!match || !kickoff) return;
-          const market = detectMarket(notes, model);
-          const dedupKey = match + "|" + kickoff + "|" + market;
-          if (status === "Pending" && !seen.has(dedupKey)) {
+        rawData.forEach(pick => {
+          if (!pick.match || !pick.date) return;
+          
+          const market = pick.market.includes("2.5") ? "u25" : "u15";
+          const kickoff = pick.date + "T" + (pick.time || "12:00");
+          const prob = pick.prob / 100; 
+          const result = pick.result || "PENDING";
+          
+          const dedupKey = pick.match + "|" + pick.date + "|" + market;
+          
+          if (result === "PENDING" && !seen.has(dedupKey)) {
             seen.add(dedupKey);
-            pending.push({ date, match, league, kickoff, prob, notes, market });
+            pending.push({ 
+                date: pick.date, 
+                match: pick.match, 
+                league: pick.league || "Unknown", 
+                kickoff: kickoff, 
+                prob: prob, 
+                notes: "", 
+                market: market 
+            });
           }
-          if (status === "Completed") completed.push({ date, match, league, kickoff, prob, result, notes, market });
+          
+          if (result === "WON" || result === "LOST") {
+            completed.push({ 
+                date: pick.date, 
+                match: pick.match, 
+                league: pick.league || "Unknown", 
+                kickoff: kickoff, 
+                prob: prob, 
+                result: result === "WON" ? "Win" : "Loss", 
+                notes: "", 
+                market: market 
+            });
+          }
         });
 
         allData = { pending, completed };
         renderToday();
         if (!document.getElementById('historyView').classList.contains('hidden')) renderHistory();
+        
       } catch (e) {
-        document.getElementById('todayContent').innerHTML = '<div class="error">Error loading: ' + e.message + '</div>';
+        console.error(e);
+        document.getElementById('todayContent').innerHTML = '<div class="error">Error loading data. Check console.</div>';
       }
     }
 
     function renderCard(p, isToday, showResult) {
       const probPct = (p.prob * 100).toFixed(1);
-      const timeStr = new Date(p.kickoff).toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit', hour12: false });
+      let timeStr = "TBD";
+      try {
+          timeStr = new Date(p.kickoff).toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit', hour12: false });
+      } catch(e) {}
+      
       const isU25 = p.market === "u25";
       const cardClass = isU25 ? "u25" : (isToday ? "today" : "");
       const badge = isU25 ? '<span class="market-badge badge-u25">📉 FT U2.5</span>' : '<span class="market-badge badge-u15">HT U1.5</span>';
@@ -218,245 +231,134 @@
       return html;
     }
 
-<script>
-  // 🚀 FIX: Point to your raw JSON file on GitHub
-  const JSON_URL = "https://raw.githubusercontent.com/Owowa17/igiowo-/main/picks_history.json";
-  let allData = [];
-  let currentFilter = "all";
-
-  function switchTab(tab) {
-    document.getElementById('tabToday').classList.toggle('active', tab === 'today');
-    document.getElementById('tabHistory').classList.toggle('active', tab === 'history');
-    document.getElementById('todayView').classList.toggle('hidden', tab !== 'today');
-    document.getElementById('historyView').classList.toggle('hidden', tab !== 'history');
-    if (tab === 'history') renderHistory();
-  }
-
-  function setFilter(f) {
-    currentFilter = f;
-    document.getElementById('filterAll').classList.toggle('active', f === 'all');
-    document.getElementById('filter7').classList.toggle('active', f === '7');
-    document.getElementById('filter30').classList.toggle('active', f === '30');
-    renderHistory();
-  }
-
-  async function loadData() {
-    try {
-      // We add a timestamp to the URL to prevent the browser from caching old data
-      const response = await fetch(JSON_URL + "?t=" + new Date().getTime());
-      if (!response.ok) throw new Error("Could not load data");
-      
-      const rawData = await response.json();
-      
-      let pending = [];
-      let completed = [];
-      const seen = new Set();
-
-      // Process the JSON data
-      rawData.forEach(pick => {
-        if (!pick.match || !pick.date) return;
-        
-        const market = pick.market.includes("2.5") ? "u25" : "u15";
-        const kickoff = pick.date + "T" + (pick.time || "12:00"); // Default to noon if time is missing
-        const prob = pick.prob / 100; // JSON has 83.0, we need 0.83 for the bar
-        const result = pick.result || "PENDING";
-        
-        const dedupKey = pick.match + "|" + pick.date + "|" + market;
-        
-        if (result === "PENDING" && !seen.has(dedupKey)) {
-          seen.add(dedupKey);
-          pending.push({ 
-              date: pick.date, 
-              match: pick.match, 
-              league: pick.league, 
-              kickoff: kickoff, 
-              prob: prob, 
-              notes: "", 
-              market: market 
-          });
-        }
-        
-        if (result === "WON" || result === "LOST") {
-          completed.push({ 
-              date: pick.date, 
-              match: pick.match, 
-              league: pick.league, 
-              kickoff: kickoff, 
-              prob: prob, 
-              result: result === "WON" ? "Win" : "Loss", 
-              notes: "", 
-              market: market 
-          });
-        }
+    function renderToday() {
+      const pending = allData.pending.slice();
+      pending.sort((a, b) => {
+        const tA = new Date(a.kickoff).getTime();
+        const tB = new Date(b.kickoff).getTime();
+        if (tA !== tB) return tA - tB;
+        return b.prob - a.prob;
       });
 
-      allData = { pending, completed };
-      renderToday();
-      if (!document.getElementById('historyView').classList.contains('hidden')) renderHistory();
-      
-    } catch (e) {
-      document.getElementById('todayContent').innerHTML = '<div class="error">Error loading JSON: ' + e.message + '</div>';
-    }
-  }
+      const now = new Date();
+      const today = new Date(now.getFullYear(), now.getMonth(), now.getDate());
+      const tomorrow = new Date(today.getTime() + 24 * 60 * 60 * 1000);
+      const todayKey = today.toISOString().split('T')[0];
+      const tomorrowKey = tomorrow.toISOString().split('T')[0];
 
-  function renderCard(p, isToday, showResult) {
-    const probPct = (p.prob * 100).toFixed(1);
-    // Safely format time
-    let timeStr = "TBD";
-    try {
-        timeStr = new Date(p.kickoff).toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit', hour12: false });
-    } catch(e) {}
-    
-    const isU25 = p.market === "u25";
-    const cardClass = isU25 ? "u25" : (isToday ? "today" : "");
-    const badge = isU25 ? '<span class="market-badge badge-u25">📉 FT U2.5</span>' : '<span class="market-badge badge-u15">HT U1.5</span>';
-    const label = isU25 ? "FT U2.5" : "HT U1.5";
+      const groups = {};
+      pending.forEach(p => {
+        const key = p.date; 
+        if (!groups[key]) groups[key] = { date: new Date(p.date), picks: [] };
+        groups[key].picks.push(p);
+      });
 
-    let html = `<div class="card ${cardClass}">
-      <div class="match">${p.match}</div>
-      <div class="league">${badge}${p.league} • ${timeStr}</div>
-      <div class="prob-bar"><div class="prob-fill" style="width:${probPct}%"></div></div>
-      <div class="prob-text"><span>${label}</span><span>${probPct}%</span></div>`;
+      const todayCount = groups[todayKey] ? groups[todayKey].picks.length : 0;
+      const tomorrowCount = groups[tomorrowKey] ? groups[tomorrowKey].picks.length : 0;
+      const u15Count = pending.filter(p => p.market === "u15").length;
+      const u25Count = pending.filter(p => p.market === "u25").length;
 
-    if (showResult) {
-      const resultClass = p.result === "Win" ? "result-win" : p.result === "Loss" ? "result-loss" : "result-void";
-      const icon = p.result === "Win" ? "✅" : p.result === "Loss" ? "❌" : "⏸";
-      html += `<div class="result-row">
-        <span class="${resultClass}">${icon} ${p.result}</span>
-        <span class="hit-note">${p.notes || ''}</span>
+      let html = `<div class="summary-bar">
+        <div class="summary-item"><div class="summary-num">${todayCount}</div><div class="summary-label">Today</div></div>
+        <div class="summary-item"><div class="summary-num">${tomorrowCount}</div><div class="summary-label">Tomorrow</div></div>
+        <div class="summary-item"><div class="summary-num">${u15Count}</div><div class="summary-label">HT U1.5</div></div>
+        <div class="summary-item"><div class="summary-num">${u25Count}</div><div class="summary-label">FT U2.5</div></div>
       </div>`;
+
+      if (pending.length === 0) {
+        html += '<div class="error">No pending picks. Check back later!</div>';
+      } else {
+        const sortedKeys = Object.keys(groups).sort();
+        sortedKeys.forEach(key => {
+          const grp = groups[key];
+          const isToday = key === todayKey;
+          const isTomorrow = key === tomorrowKey;
+          let dateLabel;
+          if (isToday) dateLabel = "Today";
+          else if (isTomorrow) dateLabel = "Tomorrow";
+          else dateLabel = grp.date.toLocaleDateString('en-US', { weekday: 'short', month: 'short', day: 'numeric' });
+
+          html += `<div class="date-group">
+            <div class="date-header">
+              <span>${dateLabel}${isToday ? '<span class="today-badge">NOW</span>' : ''}</span>
+              <span class="date-count">${grp.picks.length} pick${grp.picks.length !== 1 ? 's' : ''}</span>
+            </div>`;
+
+          grp.picks.forEach(p => { html += renderCard(p, isToday, false); });
+          html += `</div>`;
+        });
+      }
+
+      document.getElementById('todayContent').className = "";
+      document.getElementById('todayContent').innerHTML = html;
     }
 
-    html += `</div>`;
-    return html;
-  }
+    function renderHistory() {
+      const completed = allData.completed.slice();
+      let filtered = completed;
 
-  function renderToday() {
-    const pending = allData.pending.slice();
-    pending.sort((a, b) => {
-      const tA = new Date(a.kickoff).getTime();
-      const tB = new Date(b.kickoff).getTime();
-      if (tA !== tB) return tA - tB;
-      return b.prob - a.prob;
-    });
+      if (currentFilter === "7" || currentFilter === "30") {
+        const days = parseInt(currentFilter);
+        const cutoff = new Date();
+        cutoff.setDate(cutoff.getDate() - days);
+        filtered = completed.filter(c => {
+          const d = new Date(c.date);
+          return d >= cutoff;
+        });
+      }
 
-    const now = new Date();
-    const today = new Date(now.getFullYear(), now.getMonth(), now.getDate());
-    const tomorrow = new Date(today.getTime() + 24 * 60 * 60 * 1000);
-    const todayKey = today.toISOString().split('T')[0];
-    const tomorrowKey = tomorrow.toISOString().split('T')[0];
+      const u15 = filtered.filter(r => r.market === "u15");
+      const u25 = filtered.filter(r => r.market === "u25");
 
-    const groups = {};
-    pending.forEach(p => {
-      const key = p.date; // We already have the exact YYYY-MM-DD string
-      if (!groups[key]) groups[key] = { date: new Date(p.date), picks: [] };
-      groups[key].picks.push(p);
-    });
+      function stats(arr) {
+        const w = arr.filter(r => r.result === "Win").length;
+        const l = arr.filter(r => r.result === "Loss").length;
+        const t = w + l;
+        return { wins: w, losses: l, total: t, hit: t > 0 ? (w / t * 100).toFixed(1) : "—" };
+      }
 
-    const todayCount = groups[todayKey] ? groups[todayKey].picks.length : 0;
-    const tomorrowCount = groups[tomorrowKey] ? groups[tomorrowKey].picks.length : 0;
-    const u15Count = pending.filter(p => p.market === "u15").length;
-    const u25Count = pending.filter(p => p.market === "u25").length;
+      const s15 = stats(u15);
+      const s25 = stats(u25);
 
-    let html = `<div class="summary-bar">
-      <div class="summary-item"><div class="summary-num">${todayCount}</div><div class="summary-label">Today</div></div>
-      <div class="summary-item"><div class="summary-num">${tomorrowCount}</div><div class="summary-label">Tomorrow</div></div>
-      <div class="summary-item"><div class="summary-num">${u15Count}</div><div class="summary-label">HT U1.5</div></div>
-      <div class="summary-item"><div class="summary-num">${u25Count}</div><div class="summary-label">FT U2.5</div></div>
-    </div>`;
+      let html = "";
 
-    if (pending.length === 0) {
-      html += '<div class="error">No pending picks. Check back later!</div>';
-    } else {
-      const sortedKeys = Object.keys(groups).sort();
-      sortedKeys.forEach(key => {
-        const grp = groups[key];
-        const isToday = key === todayKey;
-        const isTomorrow = key === tomorrowKey;
-        let dateLabel;
-        if (isToday) dateLabel = "Today";
-        else if (isTomorrow) dateLabel = "Tomorrow";
-        else dateLabel = grp.date.toLocaleDateString('en-US', { weekday: 'short', month: 'short', day: 'numeric' });
-
-        html += `<div class="date-group">
-          <div class="date-header">
-            <span>${dateLabel}${isToday ? '<span class="today-badge">NOW</span>' : ''}</span>
-            <span class="date-count">${grp.picks.length} pick${grp.picks.length !== 1 ? 's' : ''}</span>
+      if (filtered.length === 0) {
+        html += `<div class="empty">No settled picks yet for this period.</div>`;
+      } else {
+        if (s15.total > 0) {
+          html += `<div class="stats">
+            <h2>🎯 HT Under 1.5 Track Record</h2>
+            <div class="stat-row"><span class="stat-label">Total Settled</span><span class="stat-value">${s15.total}</span></div>
+            <div class="stat-row"><span class="stat-label">Wins</span><span class="stat-value" style="color:#1B5E20">${s15.wins}</span></div>
+            <div class="stat-row"><span class="stat-label">Losses</span><span class="stat-value" style="color:#B71C1C">${s15.losses}</span></div>
+            <div class="stat-row"><span class="stat-label">Hit Rate</span><span class="stat-value">${s15.hit}%</span></div>
+            <div class="hit-bar"><div class="hit-fill" style="width:${s15.hit}%"></div></div>
           </div>`;
+        }
 
-        grp.picks.forEach(p => { html += renderCard(p, isToday, false); });
+        if (s25.total > 0) {
+          html += `<div class="stats" style="background:#FAF5FF;">
+            <h2 style="color:#7E22CE;">📉 FT Under 2.5 Track Record</h2>
+            <div class="stat-row"><span class="stat-label">Total Settled</span><span class="stat-value" style="color:#7E22CE">${s25.total}</span></div>
+            <div class="stat-row"><span class="stat-label">Wins</span><span class="stat-value" style="color:#1B5E20">${s25.wins}</span></div>
+            <div class="stat-row"><span class="stat-label">Losses</span><span class="stat-value" style="color:#B71C1C">${s25.losses}</span></div>
+            <div class="stat-row"><span class="stat-label">Hit Rate</span><span class="stat-value" style="color:#7E22CE">${s25.hit}%</span></div>
+            <div class="hit-bar"><div class="hit-fill" style="background:linear-gradient(90deg,#7E22CE,#D4AF37);width:${s25.hit}%"></div></div>
+          </div>`;
+        }
+
+        const sortedByDate = filtered.slice().sort((a, b) => new Date(b.date) - new Date(a.date));
+        html += `<div style="margin-top:20px;"><div class="date-header"><span>Recent Results</span><span class="date-count">${sortedByDate.length}</span></div>`;
+        sortedByDate.forEach(c => { html += renderCard(c, false, true); });
         html += `</div>`;
-      });
-    }
-
-    document.getElementById('todayContent').className = "";
-    document.getElementById('todayContent').innerHTML = html;
-  }
-
-  function renderHistory() {
-    const completed = allData.completed.slice();
-    let filtered = completed;
-
-    if (currentFilter === "7" || currentFilter === "30") {
-      const days = parseInt(currentFilter);
-      const cutoff = new Date();
-      cutoff.setDate(cutoff.getDate() - days);
-      filtered = completed.filter(c => {
-        const d = new Date(c.date);
-        return d >= cutoff;
-      });
-    }
-
-    const u15 = filtered.filter(r => r.market === "u15");
-    const u25 = filtered.filter(r => r.market === "u25");
-
-    function stats(arr) {
-      const w = arr.filter(r => r.result === "Win").length;
-      const l = arr.filter(r => r.result === "Loss").length;
-      const t = w + l;
-      return { wins: w, losses: l, total: t, hit: t > 0 ? (w / t * 100).toFixed(1) : "—" };
-    }
-
-    const s15 = stats(u15);
-    const s25 = stats(u25);
-
-    let html = "";
-
-    if (filtered.length === 0) {
-      html += `<div class="empty">No settled picks yet for this period.</div>`;
-    } else {
-      if (s15.total > 0) {
-        html += `<div class="stats">
-          <h2>🎯 HT Under 1.5 Track Record</h2>
-          <div class="stat-row"><span class="stat-label">Total Settled</span><span class="stat-value">${s15.total}</span></div>
-          <div class="stat-row"><span class="stat-label">Wins</span><span class="stat-value" style="color:#1B5E20">${s15.wins}</span></div>
-          <div class="stat-row"><span class="stat-label">Losses</span><span class="stat-value" style="color:#B71C1C">${s15.losses}</span></div>
-          <div class="stat-row"><span class="stat-label">Hit Rate</span><span class="stat-value">${s15.hit}%</span></div>
-          <div class="hit-bar"><div class="hit-fill" style="width:${s15.hit}%"></div></div>
-        </div>`;
       }
 
-      if (s25.total > 0) {
-        html += `<div class="stats" style="background:#FAF5FF;">
-          <h2 style="color:#7E22CE;">📉 FT Under 2.5 Track Record</h2>
-          <div class="stat-row"><span class="stat-label">Total Settled</span><span class="stat-value" style="color:#7E22CE">${s25.total}</span></div>
-          <div class="stat-row"><span class="stat-label">Wins</span><span class="stat-value" style="color:#1B5E20">${s25.wins}</span></div>
-          <div class="stat-row"><span class="stat-label">Losses</span><span class="stat-value" style="color:#B71C1C">${s25.losses}</span></div>
-          <div class="stat-row"><span class="stat-label">Hit Rate</span><span class="stat-value" style="color:#7E22CE">${s25.hit}%</span></div>
-          <div class="hit-bar"><div class="hit-fill" style="background:linear-gradient(90deg,#7E22CE,#D4AF37);width:${s25.hit}%"></div></div>
-        </div>`;
-      }
-
-      const sortedByDate = filtered.slice().sort((a, b) => new Date(b.date) - new Date(a.date));
-      html += `<div style="margin-top:20px;"><div class="date-header"><span>Recent Results</span><span class="date-count">${sortedByDate.length}</span></div>`;
-      sortedByDate.forEach(c => { html += renderCard(c, false, true); });
-      html += `</div>`;
+      document.getElementById('historyContent').className = "";
+      document.getElementById('historyContent').innerHTML = html;
     }
 
-    document.getElementById('historyContent').className = "";
-    document.getElementById('historyContent').innerHTML = html;
-  }
-
-  loadData();
-  setInterval(loadData, 60000); // Refresh every 60 seconds
-</script>
+    loadData();
+    setInterval(loadData, 60000);
+  </script>
+</body>
+ </html>
