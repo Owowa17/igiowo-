@@ -7,12 +7,35 @@ from datetime import datetime, timezone
 FC_API_KEY = os.environ.get("FC_API_KEY")
 TELEGRAM_TOKEN = os.environ.get("TELEGRAM_TOKEN")
 TELEGRAM_CHAT_ID = os.environ.get("TELEGRAM_CHAT_ID")
+ALERTS_FILE = "live_alerts.json" # Keeps track of alerts to prevent spam
 
-# We only want to run this during typical football hours (e.g., 12:00 PM to 10:00 PM WAT)
-# WAT is UTC+1. So 11:00 UTC to 21:00 UTC.
+LEAGUES_TO_SCAN = [
+    "premier", "germany2", "turkey2", "laliga", "seriea", "ligue1", "championship", "eredivisie"
+]
+
 def is_game_hour():
+    """Only run between 11:00 UTC and 21:00 UTC (12 PM - 10 PM WAT)"""
     current_hour_utc = datetime.now(timezone.utc).hour
     return 11 <= current_hour_utc <= 21
+
+def load_sent_alerts():
+    """Loads previously sent alerts to prevent spamming the same match."""
+    if os.path.exists(ALERTS_FILE):
+        try:
+            with open(ALERTS_FILE, "r") as f:
+                return set(json.load(f))
+        except:
+            return set()
+    return set()
+
+def save_sent_alert(match_name, minute):
+    """Saves a match to the alert history."""
+    alerts = list(load_sent_alerts())
+    alerts.append(f"{match_name}_{minute}")
+    # Keep only the last 100 alerts to keep the file small
+    alerts = alerts[-100:]
+    with open(ALERTS_FILE, "w") as f:
+        json.dump(alerts, f, indent=4)
 
 def send_telegram_message(text):
     if not TELEGRAM_TOKEN or not TELEGRAM_CHAT_ID: return
@@ -24,32 +47,43 @@ def send_telegram_message(text):
     except Exception as e:
         print(f"❌ Telegram Error: {e}")
 
-def get_live_matches():
+def get_live_matches(league_key):
     """
-    Fetches live matches. 
-    ⚠️ YOU MUST CHANGE THIS URL TO YOUR API'S LIVE ENDPOINT.
+    Fetches live matches for a specific league.
+    We use the fixtures endpoint and filter for live status.
     """
-    # Example placeholder URL - You need to check your API documentation for the live endpoint
-    url = "https://footballcharts-backend.onrender.com/api/v1/live/" 
+    url = f"https://footballcharts-backend.onrender.com/api/v1/leagues/{league_key}/fixtures/"
     headers = {"Authorization": f"Bearer {FC_API_KEY}"}
     
     try:
         r = requests.get(url, headers=headers, timeout=20)
         r.raise_for_status()
-        return r.json().get("matches", [])
+        data = r.json()
+        return data.get("matches", [])
     except Exception as e:
-        print(f"❌ API Error: {e}")
+        print(f"❌ API Error for {league_key}: {e}")
         return []
 
-def check_live_value(match):
+def check_live_value(match, league_key):
     """
     Logic to determine if a live match is a high-value Under 2.5 bet.
     """
-    # 1. Get Match Details (Adjust these keys based on your API)
-    match_name = f"{match.get('home_team')} vs {match.get('away_team')}"
-    minute = int(match.get("minute", 0))
-    home_score = int(match.get("home_score", 0))
-    away_score = int(match.get("away_score", 0))
+    # 1. Safely extract data (API keys might be different)
+    match_name = f"{match.get('home_team', 'Unknown')} vs {match.get('away_team', 'Unknown')}"
+    
+    # Check status (Must be live/in-progress)
+    status = str(match.get("status", "")).lower()
+    if status not in ["live", "in_play", "1h", "2h", "ht"]:
+        return None
+        
+    # Extract minute and scores safely
+    try:
+        minute = int(match.get("minute", match.get("time_elapsed", 0)))
+        home_score = int(match.get("home_score", match.get("score", {}).get("home", 0)))
+        away_score = int(match.get("away_score", match.get("score", {}).get("away", 0)))
+    except (ValueError, TypeError):
+        return None
+        
     total_goals = home_score + away_score
     
     # 2. Get Pre-match Probability
@@ -61,16 +95,19 @@ def check_live_value(match):
     if not ft_over:
         return None
         
-    ft_under_prob = (1.0 - float(ft_over)) * 100
+    try:
+        ft_under_prob = (1.0 - float(ft_over)) * 100
+    except (ValueError, TypeError):
+        return None
     
     # 3. The Live Logic
-    # We only care if the pre-match prediction was decent (e.g., > 65%)
     if ft_under_prob >= 65:
         
-        # Scenario A: 0-0 at halftime or later (Very high value)
+        # Scenario A: 0-0 at halftime or later
         if total_goals == 0 and minute >= 45:
             return {
                 "match": match_name,
+                "league": league_key.capitalize(),
                 "minute": minute,
                 "score": f"{home_score}-{away_score}",
                 "reason": "0-0 after HT. Under 2.5 is highly likely.",
@@ -81,6 +118,7 @@ def check_live_value(match):
         if total_goals == 1 and minute >= 70:
             return {
                 "match": match_name,
+                "league": league_key.capitalize(),
                 "minute": minute,
                 "score": f"{home_score}-{away_score}",
                 "reason": "Only 1 goal by 70th min. Under 2.5 is highly likely.",
@@ -95,34 +133,39 @@ def run_live_tracker():
         return
 
     print("⚡ Scanning Live Matches...")
-    matches = get_live_matches()
     
-    if not matches:
-        print("No live matches found.")
-        return
-
-    alerts_sent = 0
+    sent_alerts = load_sent_alerts()
+    alerts_sent_now = 0
     
-    for match in matches:
-        value_alert = check_live_value(match)
+    # Loop through all 8 leagues
+    for league in LEAGUES_TO_SCAN:
+        matches = get_live_matches(league)
         
-        if value_alert:
-            message = (
-                f"🚨 <b>LIVE VALUE ALERT</b> 🚨\n\n"
-                f"⚽ <b>{value_alert['match']}</b>\n"
-                f"⏱ Minute: <b>{value_alert['minute']}'</b>\n"
-                f"📊 Score: <b>{value_alert['score']}</b>\n\n"
-                f"🎯 Market: <b>LIVE Under 2.5 Goals</b>\n"
-                f"💡 Reason: {value_alert['reason']}\n"
-                f"📈 Pre-match AI Prob: {value_alert['original_prob']}%\n\n"
-                f"🔥 <b>Place your live bet now:</b>\n"
-                f"👉 <a href='https://1win.ng/?p=q70f'>Click here for 1win Live Betting</a>\n"
-                f"🎁 <b>Promo Code: <code>IGIOWO</code></b>"
-            )
-            send_telegram_message(message)
-            alerts_sent += 1
+        for match in matches:
+            value_alert = check_live_value(match, league)
             
-    print(f"✅ Live scan complete. Sent {alerts_sent} alerts.")
+            if value_alert:
+                # Check if we already sent an alert for this match in the last few minutes
+                alert_id = f"{value_alert['match']}_{value_alert['minute']}"
+                
+                if alert_id not in sent_alerts:
+                    message = (
+                        f"🚨 <b>LIVE VALUE ALERT</b> 🚨\n\n"
+                        f"⚽ <b>{value_alert['match']}</b> ({value_alert['league']})\n"
+                        f"⏱ Minute: <b>{value_alert['minute']}'</b>\n"
+                        f"📊 Score: <b>{value_alert['score']}</b>\n\n"
+                        f"🎯 Market: <b>LIVE Under 2.5 Goals</b>\n"
+                        f"💡 Reason: {value_alert['reason']}\n"
+                        f"📈 Pre-match AI Prob: {value_alert['original_prob']}%\n\n"
+                        f"🔥 <b>Place your live bet now:</b>\n"
+                        f"👉 <a href='https://1win.ng/?p=q70f'>Click here for 1win Live Betting</a>\n"
+                        f"🎁 <b>Promo Code: <code>IGIOWO</code></b>"
+                    )
+                    send_telegram_message(message)
+                    save_sent_alert(value_alert['match'], value_alert['minute'])
+                    alerts_sent_now += 1
+                    
+    print(f"✅ Live scan complete. Sent {alerts_sent_now} new alerts.")
 
 if __name__ == "__main__":
     run_live_tracker()
