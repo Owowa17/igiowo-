@@ -16,8 +16,7 @@ LEAGUES_TO_SCAN = [
 def is_game_hour():
     """Only run between 11:00 UTC and 21:00 UTC (12 PM - 10 PM WAT)"""
     current_hour_utc = datetime.now(timezone.utc).hour
-    return 11 <= current_hour_utc <= 21
-
+    return True
 def load_sent_alerts():
     """Loads previously sent alerts to prevent spamming the same match."""
     if os.path.exists(ALERTS_FILE):
