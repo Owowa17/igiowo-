@@ -24,7 +24,6 @@ def get_fixtures(league_key):
     print(f"🔄 Fetching API for {league_key}...")
     for attempt in range(3):
         try:
-            # FIX 1: Increased timeout from 20 to 60 seconds for Render cold starts
             r = requests.get(url, headers=headers, timeout=60) 
             r.raise_for_status()
             data = r.json()
@@ -46,7 +45,6 @@ def get_fixtures(league_key):
             return matches 
         except Exception as e:
             print(f"❌ Attempt {attempt+1} failed for {league_key}: {e}")
-            # FIX 2: Increased sleep to 15 seconds to give the server time to wake up
             time.sleep(15) 
             
     print(f"❌ {league_key}: Failed all 3 attempts.")
@@ -60,9 +58,16 @@ def filter_picks(matches):
     
     for match in matches:
         raw_date = match.get("date") or match.get("match_date") or match.get("start_time") or match.get("time") or ""
-        if len(str(raw_date)) >= 10:
-            match_date = str(raw_date)[:10]
-        else:
+        
+        # --- FIX 1: Date Sanitization (Prevents the 2026 Glitch) ---
+        try:
+            parsed_date = datetime.strptime(str(raw_date)[:10], "%Y-%m-%d")
+            # If API returns a date in the far future (e.g., 2026), force it to today
+            if parsed_date.year > datetime.now().year + 1:
+                match_date = datetime.now(timezone.utc).strftime("%Y-%m-%d")
+            else:
+                match_date = parsed_date.strftime("%Y-%m-%d")
+        except:
             match_date = datetime.now(timezone.utc).strftime("%Y-%m-%d")
 
         model_preds = match.get("model_predictions") or {}
@@ -176,7 +181,7 @@ def generate_picks():
     # 2. Scan Leagues
     for league in LEAGUES_TO_SCAN:
         matches = get_fixtures(league)
-        time.sleep(2) # API Protection between different leagues
+        time.sleep(2) 
         
         if matches is None:
             api_failed_or_stale = True
@@ -256,7 +261,8 @@ def generate_picks():
             # FIX 3: Force the script to exit with an error code so GitHub shows a RED X
             sys.exit(1) 
         else:
-            print("⚠️ No NEW matches met the criteria. Staying quiet.")
+            # --- FIX 2: Stay silent if there are no new picks ---
+            print("ℹ️ No new matches met the criteria today. Staying silent to avoid spamming the channel.")
 
 if __name__ == "__main__":
     generate_picks()
