@@ -99,6 +99,15 @@ def filter_picks(matches):
                     ft_candidates.append({"match": match_name, "time": match_time, "prob": round(ft_under, 1), "date": match_date, "market": "FT Under 2.5"})
             except ValueError:
                 pass
+                # --- FT Under 3.5 ---
+ft_over_35 = preds.get("ft_over_3.5")
+if ft_over_35:
+    try:
+        ft_under_35 = (1.0 - float(ft_over_35)) * 100
+        if ft_under_35 >= 75: # Higher threshold for safety
+            u35_candidates.append({"match": match_name, "time": match_time, "prob": round(ft_under_35, 1), "date": match_date, "market": "FT Under 3.5"})
+    except ValueError:
+        pass
 
         # --- DOUBLE CHANCE (1X or X2) ---
         dc_1x = preds.get("dc_1x") or preds.get("1x")
