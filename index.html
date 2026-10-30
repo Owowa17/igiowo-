@@ -124,6 +124,7 @@
   </div>
 
   <script>
+    // 🚀 PERMANENT FIX: Point to your own GitHub Pages domain
     const JSON_URL = "https://owowa17.github.io/igiowo-/picks_history.json";
     let allData = [];
     let currentFilter = "all";
@@ -160,13 +161,11 @@
         rawData.forEach(pick => {
           if (!pick.match || !pick.date) return;
           
-          // 🚨 DYNAMIC MARKET PARSING
           const marketString = pick.market || "HT Under 1.5";
           let market = "u15";
           if (marketString.includes("2.5")) market = "u25";
           if (marketString.includes("3.5")) market = "u35";
           
-          // 🚨 DATE FIX
           let pickDate = pick.date;
           if (pickDate.startsWith("2026") || pickDate.startsWith("2025")) {
              pickDate = today.toISOString().split('T')[0];
@@ -215,7 +214,6 @@
       const isU25 = p.market === "u25";
       const isU35 = p.market === "u35";
       
-      // Determine Styling
       let cardClass = isToday ? "today" : "";
       let badge = '<span class="market-badge badge-u15">HT U1.5</span>';
       let label = "HT U1.5";
@@ -380,4 +378,19 @@
           </div>`;
         }
 
-        const sortedByDate = filtered.slice().sort((a, b) => new Date(b.date) - new Dat
+        const sortedByDate = filtered.slice().sort((a, b) => new Date(b.date) - new Date(a.date));
+        html += `<div style="margin-top:20px;"><div class="date-header"><span>Recent Results</span><span class="date-count">${sortedByDate.length}</span></div>`;
+        sortedByDate.forEach(c => { html += renderCard(c, false, true); });
+        html += `</div>`;
+      }
+
+      document.getElementById('historyContent').className = "";
+      document.getElementById('historyContent').innerHTML = html;
+    }
+
+    loadData();
+    setInterval(loadData, 60000);
+  </script>
+</body>
+</html>
+,,,
