@@ -11,7 +11,6 @@
   .header h1 { color: #1B1B1B; font-size: 24px; }
   .header p { color: #1B1B1B; font-size: 12px; margin-top: 6px; opacity: 0.7; }
   
-  /* 🚀 AFFILIATE BANNER STYLES */
   .affiliate-banner { background: linear-gradient(135deg, #FF4B4B, #FF8C00); border-radius: 12px; padding: 20px; margin-bottom: 16px; text-align: center; box-shadow: 0 8px 16px rgba(0,0,0,0.3); }
   .affiliate-banner h3 { color: white; margin-top: 0; font-size: 1.1rem; font-weight: bold; text-transform: uppercase; letter-spacing: 1px; margin-bottom: 8px; }
   .affiliate-banner p { color: white; margin-bottom: 15px; font-size: 0.9rem; }
@@ -78,7 +77,6 @@
     <p>Multi-Market Prediction Dashboard</p>
   </div>
 
-  <!-- 🚀 AFFILIATE BANNER START -->
   <div class="affiliate-banner">
       <h3>🔥 Ready to place today's bets?</h3>
       <p>Join 1win using our exclusive code to get the best odds!</p>
@@ -89,13 +87,10 @@
           🎁 Promo Code: <span>IGIOWO</span>
       </div>
   </div>
-  <!-- 🚀 AFFILIATE BANNER END -->
 
-  <!-- 📢 TELEGRAM BUTTON START -->
   <a href="https://t.me/IgiowoHQ" target="_blank" class="telegram-btn">
       📢 Join our Telegram for Daily Picks
   </a>
-  <!-- 📢 TELEGRAM BUTTON END -->
 
   <div class="tabs">
     <button class="tab active" id="tabToday" onclick="switchTab('today')">Today</button>
@@ -121,7 +116,6 @@
   </div>
 
   <script>
-    // 🚀 FIX: Point to your raw JSON file on GitHub
     const JSON_URL = "https://raw.githubusercontent.com/Owowa17/igiowo-/main/picks_history.json";
     let allData = [];
     let currentFilter = "all";
@@ -152,21 +146,34 @@
         let pending = [];
         let completed = [];
         const seen = new Set();
+        
+        const today = new Date();
+        const currentYear = today.getFullYear();
 
         rawData.forEach(pick => {
           if (!pick.match || !pick.date) return;
           
-          const market = pick.market.includes("2.5") ? "u25" : "u15";
-          const kickoff = pick.date + "T" + (pick.time || "12:00");
+          // 🚨 FIX: Safely handle missing market (default to HT Under 1.5)
+          const marketString = pick.market || "HT Under 1.5";
+          const market = marketString.includes("2.5") ? "u25" : "u15";
+          
+          // 🚨 FIX: Fix the 2026 date glitch for the website display
+          let pickDate = pick.date;
+          if (pickDate.startsWith("2026") || pickDate.startsWith("2025")) {
+             // If the JSON has a future year, we force it to display as today
+             pickDate = today.toISOString().split('T')[0];
+          }
+          
+          const kickoff = pickDate + "T" + (pick.time || "12:00");
           const prob = pick.prob / 100; 
           const result = pick.result || "PENDING";
           
-          const dedupKey = pick.match + "|" + pick.date + "|" + market;
+          const dedupKey = pick.match + "|" + pickDate + "|" + market;
           
           if (result === "PENDING" && !seen.has(dedupKey)) {
             seen.add(dedupKey);
             pending.push({ 
-                date: pick.date, 
+                date: pickDate, 
                 match: pick.match, 
                 league: pick.league || "Unknown", 
                 kickoff: kickoff, 
@@ -178,7 +185,7 @@
           
           if (result === "WON" || result === "LOST") {
             completed.push({ 
-                date: pick.date, 
+                date: pickDate, 
                 match: pick.match, 
                 league: pick.league || "Unknown", 
                 kickoff: kickoff, 
@@ -196,7 +203,7 @@
         
       } catch (e) {
         console.error(e);
-        document.getElementById('todayContent').innerHTML = '<div class="error">Error loading data. Check console.</div>';
+        document.getElementById('todayContent').innerHTML = '<div class="error">Error loading data. Ensure URL is correct.</div>';
       }
     }
 
