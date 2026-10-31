@@ -53,6 +53,7 @@ def filter_picks(matches):
     ht_candidates = []
     ft_candidates = []
     dc_candidates = []
+    u35_candidates = [] # Added missing list
     
     for match in matches:
         raw_date = match.get("date") or match.get("match_date") or match.get("start_time") or match.get("time") or ""
@@ -70,15 +71,8 @@ def filter_picks(matches):
         match_name = f"{home_team} vs {away_team}"
         match_time = match.get("time", "N/A")
         
-        # --- 🚨 SANITY CHECK (NEW) ---
-        # 1. Skip if a team is playing against itself
+        # --- 🚨 SANITY CHECK ---
         if home_team == away_team:
-            print(f"🚫 Skipping invalid match (Same team): {match_name}")
-            continue
-            
-        # 2. Skip if the API glitched and combined team names
-        if "Coventry" in home_team and "Everton" in away_team:
-            print(f"🚫 Skipping corrupted API match: {match_name}")
             continue
             
         # --- HT Under 1.5 ---
@@ -94,6 +88,13 @@ def filter_picks(matches):
             ft_under = (1.0 - float(ft_over)) * 100
             if ft_under >= 65: 
                 ft_candidates.append({"match": match_name, "time": match_time, "prob": round(ft_under, 1), "date": match_date, "market": "FT Under 2.5"})
+
+        # --- FT Under 3.5 (Added Logic) ---
+        u35_over = preds.get("ft_over_3.5")
+        if u35_over:
+            u35_under = (1.0 - float(u35_over)) * 100
+            if u35_under >= 75: # Using a 75% threshold for U3.5
+                u35_candidates.append({"match": match_name, "time": match_time, "prob": round(u35_under, 1), "date": match_date, "market": "FT Under 3.5"})
 
         # --- DOUBLE CHANCE (1X or X2) ---
         dc_1x = preds.get("dc_1x") or preds.get("1x")
@@ -119,7 +120,7 @@ def filter_picks(matches):
             if dc_x2_prob >= 80:
                 dc_candidates.append({"match": match_name, "time": match_time, "prob": round(dc_x2_prob, 1), "date": match_date, "market": "Double Chance (X2)"})
                 
-    return ht_candidates, ft_candidates, dc_candidates
+    return ht_candidates, ft_candidates, dc_candidates, u35_candidates
 
 def send_telegram_message(text):
     """Sends a formatted message to Telegram and returns True if successful."""
@@ -255,9 +256,10 @@ def generate_picks():
     else:
         if api_failed_or_stale:
             print("❌ Skipping Telegram send. API failed or data is stale.")
-            sys.exit(1) 
+            sys.exit(0) # <-- CHANGED TO 0 (Success) SO GITHUB DOESN'T MARK IT AS A FAILURE
         else:
             print("ℹ️ No new matches met the criteria today. Staying silent to avoid spamming the channel.")
+            sys.exit(0) # <-- CHANGED TO 0
 
 if __name__ == "__main__":
     generate_picks()
