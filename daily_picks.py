@@ -50,54 +50,50 @@ def get_fixtures(league_key):
     return None 
 
 def filter_picks(matches):
-    """Filters matches based on strict probability criteria."""
     ht_candidates = []
     ft_candidates = []
     dc_candidates = []
-    u35_candidates = [] 
     
     for match in matches:
-        # 🚨 THE ULTIMATE DATE FIX 🚨
-        # We completely ignore the API's date and force today's real UTC date.
-        # This prevents the 2026 glitch from breaking the website and Telegram.
-        match_date = datetime.now(timezone.utc).strftime("%Y-%m-%d")
+        raw_date = match.get("date") or match.get("match_date") or match.get("start_time") or match.get("time") or ""
+        if len(str(raw_date)) >= 10:
+            match_date = str(raw_date)[:10]
+        else:
+            match_date = datetime.now(timezone.utc).strftime("%Y-%m-%d")
 
         model_preds = match.get("model_predictions") or {}
         dc_v2 = model_preds.get("dc_v2") or {}
         preds = dc_v2.get("calibrated") or dc_v2.get("raw") or {}
         
-        match_name = f"{match.get('home_team', 'Unknown')} vs {match.get('away_team', 'Unknown')}"
+        home_team = match.get("home_team", "Unknown")
+        away_team = match.get("away_team", "Unknown")
+        match_name = f"{home_team} vs {away_team}"
         match_time = match.get("time", "N/A")
         
+        # --- 🚨 SANITY CHECK (NEW) ---
+        # 1. Skip if a team is playing against itself
+        if home_team == away_team:
+            print(f"🚫 Skipping invalid match (Same team): {match_name}")
+            continue
+            
+        # 2. Skip if the API glitched and combined team names
+        if "Coventry" in home_team and "Everton" in away_team:
+            print(f"🚫 Skipping corrupted API match: {match_name}")
+            continue
+            
         # --- HT Under 1.5 ---
         ht_over = preds.get("ht_over_1.5")
         if ht_over:
-            try:
-                ht_under = (1.0 - float(ht_over)) * 100
-                if ht_under >= 70:
-                    ht_candidates.append({"match": match_name, "time": match_time, "prob": round(ht_under, 1), "date": match_date, "market": "HT Under 1.5"})
-            except ValueError:
-                pass
+            ht_under = (1.0 - float(ht_over)) * 100
+            if ht_under >= 70:
+                ht_candidates.append({"match": match_name, "time": match_time, "prob": round(ht_under, 1), "date": match_date, "market": "HT Under 1.5"})
                 
         # --- FT Under 2.5 ---
         ft_over = preds.get("ft_over_2.5")
         if ft_over:
-            try:
-                ft_under = (1.0 - float(ft_over)) * 100
-                if ft_under >= 65: 
-                    ft_candidates.append({"match": match_name, "time": match_time, "prob": round(ft_under, 1), "date": match_date, "market": "FT Under 2.5"})
-            except ValueError:
-                pass
-
-        # --- FT Under 3.5 ---
-        ft_over_35 = preds.get("ft_over_3.5")
-        if ft_over_35:
-            try:
-                ft_under_35 = (1.0 - float(ft_over_35)) * 100
-                if ft_under_35 >= 75: 
-                    u35_candidates.append({"match": match_name, "time": match_time, "prob": round(ft_under_35, 1), "date": match_date, "market": "FT Under 3.5"})
-            except ValueError:
-                pass
+            ft_under = (1.0 - float(ft_over)) * 100
+            if ft_under >= 65: 
+                ft_candidates.append({"match": match_name, "time": match_time, "prob": round(ft_under, 1), "date": match_date, "market": "FT Under 2.5"})
 
         # --- DOUBLE CHANCE (1X or X2) ---
         dc_1x = preds.get("dc_1x") or preds.get("1x")
@@ -108,31 +104,22 @@ def filter_picks(matches):
             p_draw = preds.get("ft_draw") or preds.get("draw") or preds.get("x")
             p_away = preds.get("ft_away_win") or preds.get("away_win") or preds.get("2")
             
-            try:
-                if p_home and p_draw:
-                    dc_1x = float(p_home) + float(p_draw)
-                if p_away and p_draw:
-                    dc_x2 = float(p_away) + float(p_draw)
-            except ValueError:
-                pass
+            if p_home and p_draw:
+                dc_1x = float(p_home) + float(p_draw)
+            if p_away and p_draw:
+                dc_x2 = float(p_away) + float(p_draw)
                 
         if dc_1x:
-            try:
-                dc_1x_prob = float(dc_1x) * 100 if float(dc_1x) <= 1.0 else float(dc_1x)
-                if dc_1x_prob >= 80:
-                    dc_candidates.append({"match": match_name, "time": match_time, "prob": round(dc_1x_prob, 1), "date": match_date, "market": "Double Chance (1X)"})
-            except ValueError:
-                pass
+            dc_1x_prob = float(dc_1x) * 100 if float(dc_1x) <= 1.0 else float(dc_1x)
+            if dc_1x_prob >= 80:
+                dc_candidates.append({"match": match_name, "time": match_time, "prob": round(dc_1x_prob, 1), "date": match_date, "market": "Double Chance (1X)"})
                 
         if dc_x2:
-            try:
-                dc_x2_prob = float(dc_x2) * 100 if float(dc_x2) <= 1.0 else float(dc_x2)
-                if dc_x2_prob >= 80:
-                    dc_candidates.append({"match": match_name, "time": match_time, "prob": round(dc_x2_prob, 1), "date": match_date, "market": "Double Chance (X2)"})
-            except ValueError:
-                pass
+            dc_x2_prob = float(dc_x2) * 100 if float(dc_x2) <= 1.0 else float(dc_x2)
+            if dc_x2_prob >= 80:
+                dc_candidates.append({"match": match_name, "time": match_time, "prob": round(dc_x2_prob, 1), "date": match_date, "market": "Double Chance (X2)"})
                 
-    return ht_candidates, ft_candidates, dc_candidates, u35_candidates
+    return ht_candidates, ft_candidates, dc_candidates
 
 def send_telegram_message(text):
     """Sends a formatted message to Telegram and returns True if successful."""
