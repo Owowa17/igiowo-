@@ -16,6 +16,7 @@ LEAGUES_TO_SCAN = [
 HISTORY_FILE = "picks_history.json"
 
 def get_fixtures(league_key):
+    """Fetches fixtures for a specific league with retry logic and stale data checks."""
     url = f"https://footballcharts-backend.onrender.com/api/v1/leagues/{league_key}/fixtures/"
     headers = {"Authorization": f"Bearer {FC_API_KEY}"}
     
@@ -53,20 +54,13 @@ def filter_picks(matches):
     ht_candidates = []
     ft_candidates = []
     dc_candidates = []
-    u35_candidates = [] # New list for Under 3.5
+    u35_candidates = [] 
     
     for match in matches:
-        raw_date = match.get("date") or match.get("match_date") or match.get("start_time") or match.get("time") or ""
-        
-        # --- DATE FIX ---
-        try:
-            parsed_date = datetime.strptime(str(raw_date)[:10], "%Y-%m-%d")
-            if abs((parsed_date - datetime.now(timezone.utc)).days) > 2:
-                match_date = datetime.now(timezone.utc).strftime("%Y-%m-%d")
-            else:
-                match_date = parsed_date.strftime("%Y-%m-%d")
-        except:
-            match_date = datetime.now(timezone.utc).strftime("%Y-%m-%d")
+        # 🚨 THE ULTIMATE DATE FIX 🚨
+        # We completely ignore the API's date and force today's real UTC date.
+        # This prevents the 2026 glitch from breaking the website and Telegram.
+        match_date = datetime.now(timezone.utc).strftime("%Y-%m-%d")
 
         model_preds = match.get("model_predictions") or {}
         dc_v2 = model_preds.get("dc_v2") or {}
@@ -100,7 +94,7 @@ def filter_picks(matches):
         if ft_over_35:
             try:
                 ft_under_35 = (1.0 - float(ft_over_35)) * 100
-                if ft_under_35 >= 75: # Higher threshold for U3.5
+                if ft_under_35 >= 75: 
                     u35_candidates.append({"match": match_name, "time": match_time, "prob": round(ft_under_35, 1), "date": match_date, "market": "FT Under 3.5"})
             except ValueError:
                 pass
@@ -141,6 +135,7 @@ def filter_picks(matches):
     return ht_candidates, ft_candidates, dc_candidates, u35_candidates
 
 def send_telegram_message(text):
+    """Sends a formatted message to Telegram and returns True if successful."""
     if not TELEGRAM_TOKEN or not TELEGRAM_CHAT_ID:
         print("❌ TELEGRAM CREDENTIALS MISSING. Skipping send.")
         return False
