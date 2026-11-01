@@ -22,5 +22,13 @@
         "date": "2026-10-31",
         "market": "HT Under 1.5",
         "league": "Turkey2"
+    },
+    {
+        "match": "Bandirmaspor vs Karagumruk",
+        "time": "10:30",
+        "prob": 74.5,
+        "date": "2026-11-08",
+        "market": "HT Under 1.5",
+        "league": "Turkey2"
     }
 ]
