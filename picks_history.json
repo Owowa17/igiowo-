@@ -30,5 +30,13 @@
         "date": "2026-11-08",
         "market": "HT Under 1.5",
         "league": "Turkey2"
+    },
+    {
+        "match": "Igdir FK vs Umraniyespor",
+        "time": "17:00",
+        "prob": 72.0,
+        "date": "2026-11-20",
+        "market": "HT Under 1.5",
+        "league": "Turkey2"
     }
 ]
