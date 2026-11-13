@@ -38,5 +38,13 @@
         "date": "2026-11-20",
         "market": "HT Under 1.5",
         "league": "Turkey2"
+    },
+    {
+        "match": "Mardin 1969 vs Bandirmaspor",
+        "time": "10:30",
+        "prob": 72.9,
+        "date": "2026-11-21",
+        "market": "HT Under 1.5",
+        "league": "Turkey2"
     }
 ]
