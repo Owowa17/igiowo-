@@ -46,5 +46,29 @@
         "date": "2026-11-21",
         "market": "HT Under 1.5",
         "league": "Turkey2"
+    },
+    {
+        "match": "Sariyer vs Istanbulspor AS",
+        "time": "17:00",
+        "prob": 72.1,
+        "date": "2026-11-29",
+        "market": "HT Under 1.5",
+        "league": "Turkey2"
+    },
+    {
+        "match": "Crystal Palace vs Hull",
+        "time": "14:05",
+        "prob": 71.5,
+        "date": "2026-11-29",
+        "market": "HT Under 1.5",
+        "league": "Premier"
+    },
+    {
+        "match": "Pendikspor vs Igdir FK",
+        "time": "17:00",
+        "prob": 71.5,
+        "date": "2026-11-29",
+        "market": "HT Under 1.5",
+        "league": "Turkey2"
     }
 ]
